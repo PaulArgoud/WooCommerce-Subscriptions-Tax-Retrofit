@@ -3,10 +3,10 @@
 # This file is distributed under the same license as the WooCommerce Subscription Tax Retrofit plugin.
 msgid ""
 msgstr ""
-"Project-Id-Version: WooCommerce Subscription Tax Retrofit 1.4.4\n"
+"Project-Id-Version: WooCommerce Subscription Tax Retrofit 1.4.5\n"
 "Report-Msgid-Bugs-To: https://paul.argoud.net\n"
-"POT-Creation-Date: 2026-02-08 10:00+0000\n"
-"PO-Revision-Date: 2026-02-08 10:00+0000\n"
+"POT-Creation-Date: 2026-11-11 10:00+0000\n"
+"PO-Revision-Date: 2026-11-11 10:00+0000\n"
 "Last-Translator: Paul ARGOUD <contact@paul.argoud.net>\n"
 "Language-Team: French\n"
 "Language: fr_FR\n"
@@ -256,9 +256,6 @@ msgstr "Vous devez sélectionner au moins un statut valide"
 msgid "La tolérance doit être un nombre entre 0.001 et 1€"
 msgstr "La tolérance doit être un nombre entre 0.001 et 1€"
 
-msgid "La tolérance doit être un nombre valide"
-msgstr "La tolérance doit être un nombre valide"
-
 msgid "Paramètres enregistrés"
 msgstr "Paramètres enregistrés"
 
@@ -364,6 +361,9 @@ msgstr "Consultez les %s"
 
 msgid "logs WooCommerce"
 msgstr "logs WooCommerce"
+
+msgid "Logs WooCommerce"
+msgstr "Logs WooCommerce"
 
 msgid "pour voir :"
 msgstr "pour voir :"
@@ -688,8 +688,8 @@ msgstr "Actions"
 msgid "Identifie abonnements %1$s créés jusqu'au %2$s"
 msgstr "Identifie abonnements %1$s créés jusqu'au %2$s"
 
-msgid "Supprime/recrée chaque ligne avec HT et TVA"
-msgstr "Supprime/recrée chaque ligne avec HT et TVA"
+msgid "Convertit chaque ligne en HT + TVA (sans la supprimer : ID, classe de taxe et métadonnées conservés)"
+msgstr "Convertit chaque ligne en HT + TVA (sans la supprimer : ID, classe de taxe et métadonnées conservés)"
 
 msgid "Préserve métadonnées"
 msgstr "Préserve métadonnées"
@@ -798,8 +798,6 @@ msgstr "Configurez un taux de TVA dans"
 msgid "Taux recherché : %s%%"
 msgstr "Taux recherché : %s%%"
 
-msgid "modifiable via filtre"
-msgstr "modifiable via filtre"
 
 #, php-format
 msgid "Consultez les %s pour voir les taux disponibles"
@@ -871,10 +869,6 @@ msgstr "Statuts"
 msgid "Dépendances manquantes"
 msgstr "Dépendances manquantes"
 
-#, php-format
-msgid "Taux %s%% non trouvé dans WooCommerce, utilisation du taux configuré"
-msgstr "Taux %s%% non trouvé dans WooCommerce, utilisation du taux configuré"
-
 msgid "Lancement de la simulation..."
 msgstr "Lancement de la simulation..."
 
@@ -940,3 +934,61 @@ msgstr "Arrêté"
 #. WP-CLI: reset command
 msgid "Migration complètement réinitialisée"
 msgstr "Migration complètement réinitialisée"
+
+#, php-format
+msgid "%d abonnement(s) non annulé(s)"
+msgstr "%d abonnement(s) non annulé(s)"
+
+#, php-format
+msgid "ANNULATION : %d abonnement(s) vont repasser en TTC sans TVA"
+msgstr "ANNULATION : %d abonnement(s) vont repasser en TTC sans TVA"
+
+msgid "Alertes de tolérance"
+msgstr "Alertes de tolérance"
+
+msgid "Annulation terminée"
+msgstr "Annulation terminée"
+
+msgid "Arrière-plan"
+msgstr "Arrière-plan"
+
+msgid "Arrêter la migration"
+msgstr "Arrêter la migration"
+
+msgid "Arrêter la migration après le lot en cours ? Les abonnements déjà migrés le restent ; vous pourrez reprendre plus tard."
+msgstr "Arrêter la migration après le lot en cours ? Les abonnements déjà migrés le restent ; vous pourrez reprendre plus tard."
+
+msgid "Aucun abonnement migré à annuler."
+msgstr "Aucun abonnement migré à annuler."
+
+#, php-format
+msgid "Dernière mise à jour : il y a %s"
+msgstr "Dernière mise à jour : il y a %s"
+
+msgid "Détail complet : logs WooCommerce (source : wcs-tax-retrofit)."
+msgstr "Détail complet : logs WooCommerce (source : wcs-tax-retrofit)."
+
+msgid "La migration continue même si vous fermez cette page (tâches Action Scheduler de WooCommerce)."
+msgstr "La migration continue même si vous fermez cette page (tâches Action Scheduler de WooCommerce)."
+
+msgid "Masquer ce bilan"
+msgstr "Masquer ce bilan"
+
+msgid "Migration en arrière-plan arrêtée"
+msgstr "Migration en arrière-plan arrêtée"
+
+msgid "Migration en arrière-plan interrompue par une erreur"
+msgstr "Migration en arrière-plan interrompue par une erreur"
+
+msgid "Migration en arrière-plan terminée"
+msgstr "Migration en arrière-plan terminée"
+
+msgid "Migration en cours en arrière-plan"
+msgstr "Migration en cours en arrière-plan"
+
+#, php-format
+msgid "Migration impossible : ces tables ne sont pas en InnoDB et ne permettent pas l'annulation (ROLLBACK) : %s. Convertissez-les en InnoDB avant de continuer."
+msgstr "Migration impossible : ces tables ne sont pas en InnoDB et ne permettent pas l'annulation (ROLLBACK) : %s. Convertissez-les en InnoDB avant de continuer."
+
+msgid "Renouvellements impayés"
+msgstr "Renouvellements impayés"

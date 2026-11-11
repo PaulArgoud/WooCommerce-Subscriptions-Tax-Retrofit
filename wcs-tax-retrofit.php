@@ -3,11 +3,14 @@
  * Plugin Name: WooCommerce Subscriptions Tax Retrofit
  * Plugin URI: https://paul.argoud.net
  * Description: Retrofits existing WooCommerce Subscriptions with proper tax breakdown (pre-tax + VAT) while preserving the total price paid by customers. Essential after crossing the VAT registration threshold.
- * Version: 1.4.4
+ * Version: 1.4.5
  * Author: Paul ARGOUD
  * Author URI: https://paul.argoud.net
- * Requires at least: 5.0
+ * Requires at least: 6.2
  * Requires PHP: 7.4
+ * Requires Plugins: woocommerce
+ * WC requires at least: 8.0
+ * WC tested up to: 11.3
  * License: GPL v2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain: wcs-tax-retrofit
@@ -18,7 +21,17 @@ if (!defined('ABSPATH')) exit;
 
 /**
  * VÉRIFICATION CENTRALISÉE DES DÉPENDANCES
- * Bloque tout le plugin si les prérequis ne sont pas remplis
+ *
+ * WordPress charge les plugins par ordre alphabétique : "wcs-tax-retrofit/" est chargé
+ * AVANT "woocommerce/" et "woocommerce-subscriptions/". La vérification ne doit donc
+ * jamais être faite au chargement du fichier, mais à l'exécution (hooks), une fois
+ * tous les plugins chargés. Chaque point d'entrée (menu, AJAX, export, WP-CLI)
+ * appelle wc_tax_retrofit_check_dependencies() avant d'agir.
+ *
+ * Les messages sont construits à l'affichage (admin_notices, après init) pour
+ * respecter le chargement des traductions imposé par WordPress 6.7+.
+ *
+ * @return array Liste d'erreurs (message + action), vide si tout est OK
  */
 function wc_tax_retrofit_check_dependencies_early(): array {
     $errors = array();
@@ -58,51 +71,62 @@ function wc_tax_retrofit_check_dependencies_early(): array {
     return $errors;
 }
 
-// Effectuer la vérification immédiatement
-$wc_tax_retrofit_dependency_errors = wc_tax_retrofit_check_dependencies_early();
+/**
+ * Affiche une notice d'erreur si les dépendances sont manquantes
+ * (exécuté sur admin_notices, donc après le chargement de tous les plugins)
+ */
+function wc_tax_retrofit_dependency_notice(): void {
+    $wc_tax_retrofit_dependency_errors = wc_tax_retrofit_check_dependencies_early();
+    if (empty($wc_tax_retrofit_dependency_errors)) {
+        return;
+    }
 
-// Si des erreurs existent, afficher une notice et arrêter le chargement
-if (!empty($wc_tax_retrofit_dependency_errors)) {
-    add_action('admin_notices', function() use ($wc_tax_retrofit_dependency_errors) {
-        echo '<div class="notice notice-error" style="padding: 15px 20px;">';
-        echo '<p style="margin: 0 0 10px 0;"><strong>';
-        echo esc_html__('WooCommerce Subscription Tax Retrofit', 'wcs-tax-retrofit');
-        echo '</strong></p>';
-        echo '<p style="margin: 0 0 10px 0;">';
-        echo esc_html__('Le plugin ne peut pas se charger car certaines dépendances sont manquantes :', 'wcs-tax-retrofit');
-        echo '</p>';
-        echo '<ul style="margin: 10px 0 10px 20px; list-style: disc;">';
-        
-        foreach ($wc_tax_retrofit_dependency_errors as $error) {
-            echo '<li style="margin: 5px 0;">';
-            echo '<strong>' . esc_html($error['message']) . '</strong>';
-            if (!empty($error['action'])) {
-                echo '<br><span style="color: #666;">';
-                // action peut contenir du HTML (lien), on utilise wp_kses
-                echo wp_kses(
-                    $error['action'],
-                    array(
-                        'a' => array(
-                            'href' => array(),
-                            'target' => array(),
-                            'rel' => array()
-                        )
-                    )
-                );
-                echo '</span>';
-            }
-            echo '</li>';
-        }
-        
-        echo '</ul>';
-        echo '</div>';
-    });
+    echo '<div class="notice notice-error" style="padding: 15px 20px;">';
+    echo '<p style="margin: 0 0 10px 0;"><strong>';
+    echo esc_html__('WooCommerce Subscription Tax Retrofit', 'wcs-tax-retrofit');
+    echo '</strong></p>';
+    echo '<p style="margin: 0 0 10px 0;">';
+    echo esc_html__('Le plugin ne peut pas se charger car certaines dépendances sont manquantes :', 'wcs-tax-retrofit');
+    echo '</p>';
+    echo '<ul style="margin: 10px 0 10px 20px; list-style: disc;">';
     
-    // ARRÊTER le chargement du plugin ici
-    return;
+    foreach ($wc_tax_retrofit_dependency_errors as $error) {
+        echo '<li style="margin: 5px 0;">';
+        echo '<strong>' . esc_html($error['message']) . '</strong>';
+        if (!empty($error['action'])) {
+            echo '<br><span style="color: #666;">';
+            // action peut contenir du HTML (lien), on utilise wp_kses
+            echo wp_kses(
+                $error['action'],
+                array(
+                    'a' => array(
+                        'href' => array(),
+                        'target' => array(),
+                        'rel' => array()
+                    )
+                )
+            );
+            echo '</span>';
+        }
+        echo '</li>';
+    }
+    
+    echo '</ul>';
+    echo '</div>';
 }
+add_action('admin_notices', 'wc_tax_retrofit_dependency_notice');
 
-// Si on arrive ici, toutes les dépendances sont OK, on peut continuer
+/**
+ * Déclare la compatibilité avec HPOS (High-Performance Order Storage)
+ * Le plugin passe exclusivement par l'API CRUD de WooCommerce pour les abonnements
+ * (seule la table woocommerce_tax_rates est lue en SQL direct).
+ */
+function wc_tax_retrofit_declare_wc_compatibility(): void {
+    if (class_exists('\Automattic\WooCommerce\Utilities\FeaturesUtil')) {
+        \Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility('custom_order_tables', __FILE__, true);
+    }
+}
+add_action('before_woocommerce_init', 'wc_tax_retrofit_declare_wc_compatibility');
 
 /**
  * Vérifie les dépendances à l'exécution
@@ -115,7 +139,7 @@ function wc_tax_retrofit_check_dependencies(): bool {
     return class_exists('WooCommerce') && function_exists('wcs_get_subscriptions');
 }
 
-define('WC_TAX_RETROFIT_VERSION', '1.4.4');
+define('WC_TAX_RETROFIT_VERSION', '1.4.5');
 define('WC_TAX_RETROFIT_BATCH_SIZE', 100);
 define('WC_TAX_RETROFIT_TOLERANCE', 0.01);
 
@@ -414,13 +438,23 @@ function wc_tax_retrofit_count_subscriptions(): int {
         return $cached;
     }
     if (!function_exists('wcs_get_subscriptions')) return 0;
-    $count_args = array(
-        'status' => wc_tax_retrofit_get_subscription_statuses(),
+
+    // wcs_get_subscriptions() ignore 'return' => 'ids' et instancie TOUS les abonnements
+    // (WCS 9.x). On compte donc via WC_Order_Query en mode paginé : une seule requête COUNT,
+    // compatible stockage posts et HPOS.
+    $statuses = array_map(
+        fn($status) => function_exists('wcs_sanitize_subscription_status_key') ? wcs_sanitize_subscription_status_key($status) : 'wc-' . $status,
+        wc_tax_retrofit_get_subscription_statuses()
+    );
+    $results = wc_get_orders(array(
+        'type' => 'shop_subscription',
+        'status' => $statuses,
         'date_created' => '<=' . wc_tax_retrofit_get_date_limit(),
         'return' => 'ids',
-        'limit' => -1,
-    );
-    $cached = count(wcs_get_subscriptions($count_args));
+        'limit' => 1,
+        'paginate' => true,
+    ));
+    $cached = is_object($results) && isset($results->total) ? (int) $results->total : 0;
     return $cached;
 }
 
@@ -510,6 +544,73 @@ function wc_tax_retrofit_validate_subscription($subscription): bool {
     return is_a($subscription, 'WC_Subscription') && $subscription->get_total() > 0 && count($subscription->get_items()) > 0;
 }
 
+/**
+ * Récupère la classe de taxe d'un taux WooCommerce
+ *
+ * @param int|string|null $tax_rate_id ID du taux
+ * @return string|null Slug de la classe ('' = standard) ou null si introuvable
+ */
+function wc_tax_retrofit_get_tax_rate_class($tax_rate_id): ?string {
+    if (empty($tax_rate_id)) {
+        return null;
+    }
+    global $wpdb;
+    // get_row() et non get_var() : get_var() renvoie null pour une chaîne vide,
+    // or '' est précisément la classe "standard"
+    $row = $wpdb->get_row($wpdb->prepare(
+        "SELECT tax_rate_class FROM {$wpdb->prefix}woocommerce_tax_rates WHERE tax_rate_id = %d",
+        $tax_rate_id
+    ));
+    return $row === null ? null : (string) $row->tax_rate_class;
+}
+
+/**
+ * Vide les caches d'un abonnement après un ROLLBACK
+ *
+ * Le ROLLBACK annule les écritures SQL, mais pas les caches objet de WooCommerce
+ * (lignes de commande, cache HPOS, cache de post). Sans ce nettoyage, un cache
+ * persistant (Redis, Memcached) continuerait de servir la version modifiée.
+ *
+ * @param int $subscription_id ID de l'abonnement
+ */
+function wc_tax_retrofit_flush_subscription_cache(int $subscription_id): void {
+    clean_post_cache($subscription_id);
+    wp_cache_delete('order-items-' . $subscription_id, 'orders');
+    wp_cache_delete($subscription_id, 'orders');
+
+    try {
+        if (class_exists('\Automattic\WooCommerce\Utilities\OrderUtil')
+            && \Automattic\WooCommerce\Utilities\OrderUtil::orders_cache_usage_is_enabled()
+            && class_exists('\Automattic\WooCommerce\Caches\OrderCache')) {
+            wc_get_container()->get(\Automattic\WooCommerce\Caches\OrderCache::class)->remove($subscription_id);
+        }
+    } catch (\Throwable $e) {
+        wc_tax_retrofit_log('Nettoyage cache HPOS impossible pour #' . $subscription_id . ' : ' . $e->getMessage(), 'warning');
+    }
+}
+
+/**
+ * Trouve l'ID d'un taux WooCommerce à partir d'un pourcentage (utilisé par WP-CLI --tax-rate)
+ * Priorité : classe standard, puis France, puis priorité WooCommerce la plus haute
+ *
+ * @param float $percent Taux en pourcentage (ex : 20.0)
+ * @return string|null ID du taux ou null si aucun ne correspond
+ */
+function wc_tax_retrofit_find_rate_id_by_percent(float $percent): ?string {
+    global $wpdb;
+    $id = $wpdb->get_var($wpdb->prepare(
+        "SELECT tax_rate_id FROM {$wpdb->prefix}woocommerce_tax_rates
+         WHERE ABS(tax_rate - %f) < 0.01
+         ORDER BY
+            CASE WHEN tax_rate_class = '' THEN 0 ELSE 1 END,
+            CASE WHEN tax_rate_country = 'FR' THEN 0 ELSE 1 END,
+            tax_rate_priority ASC, tax_rate_id ASC
+         LIMIT 1",
+        $percent
+    ));
+    return $id === null ? null : (string) $id;
+}
+
 function wc_tax_retrofit_get_tax_rate_id() {
     static $cached = null;
     static $cached_resolved = false;
@@ -523,7 +624,25 @@ function wc_tax_retrofit_get_tax_rate_id() {
     $table = $wpdb->prefix . 'woocommerce_tax_rates';
 
     wc_tax_retrofit_log(sprintf('Recherche taux de TVA : %.2f%%', $target_rate));
-    
+
+    // Étape 0 : Taux explicitement sélectionné dans l'interface / WP-CLI
+    // (sinon un autre taux de même pourcentage — autre pays ou autre classe — pourrait être utilisé)
+    $selected_rate_id = get_option('wc_tax_retrofit_selected_tax_rate_id', null);
+    if ($selected_rate_id !== null) {
+        $selected = $wpdb->get_row($wpdb->prepare(
+            "SELECT tax_rate_id, tax_rate_country, tax_rate, tax_rate_class FROM {$table} WHERE tax_rate_id = %d",
+            $selected_rate_id
+        ));
+        if ($selected) {
+            wc_tax_retrofit_log(sprintf('✓ Tax rate sélectionné : ID=%s, Pays=%s, Taux=%s%%',
+                $selected->tax_rate_id, $selected->tax_rate_country ?: '*', $selected->tax_rate));
+            $cached = $selected->tax_rate_id;
+            $cached_resolved = true;
+            return $cached;
+        }
+        wc_tax_retrofit_log(sprintf('Taux sélectionné ID=%s introuvable, recherche par pourcentage...', $selected_rate_id), 'warning');
+    }
+
     // Étape 1 : Recherche directe en base de données (plus fiable)
     // D'abord chercher pour la France
     $result = $wpdb->get_row($wpdb->prepare(
@@ -631,25 +750,379 @@ function wc_tax_retrofit_get_tax_rate_id() {
     return null;
 }
 
-function wc_tax_retrofit_process($dry_run = false, $offset = 0): array {
-    // VÉRIFICATION CRITIQUE : Dépendances
-    if (!wc_tax_retrofit_check_dependencies()) {
-        wc_tax_retrofit_log('ERREUR CRITIQUE : Dépendances manquantes', 'error');
-        return array(
-            'total' => 0,
-            'batch_size' => 0,
-            'offset' => 0,
-            'updated' => 0,
-            'skipped' => 0,
-            'errors' => 1,
-            'details' => array(),
-            'errors_list' => array(__('Dépendances manquantes (WooCommerce ou WooCommerce Subscriptions)', 'wcs-tax-retrofit')),
-            'tolerance_warnings' => array(),
-            'has_more' => false,
-            'csv_data' => array()
+/**
+ * ============================================================================
+ * VERROU ATOMIQUE (1.4.5)
+ * ============================================================================
+ * Un transient n'est pas un verrou fiable : get_transient() puis set_transient()
+ * n'est pas atomique (deux exécutions simultanées passent toutes les deux), et avec
+ * un cache objet persistant (Redis, Memcached) la clé peut être évincée quand la
+ * mémoire est pleine. add_option() n'est pas atomique non plus (WordPress utilise
+ * INSERT ... ON DUPLICATE KEY UPDATE).
+ *
+ * Le verrou est donc une ligne de wp_options insérée avec INSERT IGNORE : l'index
+ * unique sur option_name (PRIMARY KEY avec Index WP MySQL For Speed) garantit qu'une
+ * seule exécution l'obtient. La valeur est un jeton "timestamp:aléatoire" ; un verrou
+ * plus vieux que WC_TAX_RETROFIT_LOCK_TTL est repris par compare-and-swap.
+ */
+define('WC_TAX_RETROFIT_LOCK_OPTION', 'wc_tax_retrofit_lock');
+define('WC_TAX_RETROFIT_LOCK_TTL', 10 * MINUTE_IN_SECONDS);
+
+/**
+ * Tente d'obtenir le verrou d'exécution
+ *
+ * @return string|null Jeton du verrou, ou null si une autre exécution le détient
+ */
+function wc_tax_retrofit_acquire_lock(): ?string {
+    global $wpdb;
+    $token = time() . ':' . wp_generate_password(12, false);
+
+    $inserted = $wpdb->query($wpdb->prepare(
+        "INSERT IGNORE INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, %s, 'no')",
+        WC_TAX_RETROFIT_LOCK_OPTION, $token
+    ));
+    wp_cache_delete(WC_TAX_RETROFIT_LOCK_OPTION, 'options');
+    if ($inserted === 1) {
+        return $token;
+    }
+
+    // Verrou existant : le reprendre seulement s'il a expiré (exécution tuée, timeout PHP...)
+    $current = $wpdb->get_var($wpdb->prepare(
+        "SELECT option_value FROM {$wpdb->options} WHERE option_name = %s",
+        WC_TAX_RETROFIT_LOCK_OPTION
+    ));
+    if ($current !== null && (time() - (int) strtok((string) $current, ':')) > WC_TAX_RETROFIT_LOCK_TTL) {
+        $swapped = $wpdb->query($wpdb->prepare(
+            "UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s AND option_value = %s",
+            $token, WC_TAX_RETROFIT_LOCK_OPTION, $current
+        ));
+        wp_cache_delete(WC_TAX_RETROFIT_LOCK_OPTION, 'options');
+        if ($swapped === 1) {
+            wc_tax_retrofit_log('Verrou expiré repris (exécution précédente interrompue)', 'warning');
+            return $token;
+        }
+    }
+    return null;
+}
+
+/**
+ * Prolonge le verrou (battement de cœur) pendant un traitement long
+ *
+ * @param string $token Jeton courant, remplacé par le nouveau jeton si la mise à jour réussit
+ */
+function wc_tax_retrofit_refresh_lock(string &$token): void {
+    global $wpdb;
+    $new_token = time() . ':' . substr($token, strpos($token, ':') + 1);
+    if ($new_token === $token) {
+        return;
+    }
+    $updated = $wpdb->query($wpdb->prepare(
+        "UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s AND option_value = %s",
+        $new_token, WC_TAX_RETROFIT_LOCK_OPTION, $token
+    ));
+    if ($updated === 1) {
+        $token = $new_token;
+    }
+}
+
+/**
+ * Libère le verrou (uniquement s'il appartient encore à cette exécution)
+ *
+ * @param string|null $token Jeton obtenu par wc_tax_retrofit_acquire_lock()
+ */
+function wc_tax_retrofit_release_lock(?string $token): void {
+    global $wpdb;
+    if ($token === null) {
+        return;
+    }
+    $wpdb->query($wpdb->prepare(
+        "DELETE FROM {$wpdb->options} WHERE option_name = %s AND option_value = %s",
+        WC_TAX_RETROFIT_LOCK_OPTION, $token
+    ));
+    wp_cache_delete(WC_TAX_RETROFIT_LOCK_OPTION, 'options');
+}
+
+/**
+ * Supprime le verrou sans condition (réinitialisation manuelle)
+ */
+function wc_tax_retrofit_force_release_lock(): void {
+    global $wpdb;
+    $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name = %s", WC_TAX_RETROFIT_LOCK_OPTION));
+    wp_cache_delete(WC_TAX_RETROFIT_LOCK_OPTION, 'options');
+    delete_transient('wc_tax_retrofit_running'); // ancien verrou (≤ 1.4.4)
+}
+
+/**
+ * Indique si une exécution détient actuellement un verrou valide
+ * (lecture directe en base : jamais de valeur périmée servie par un cache objet)
+ */
+function wc_tax_retrofit_is_locked(): bool {
+    global $wpdb;
+    $current = $wpdb->get_var($wpdb->prepare(
+        "SELECT option_value FROM {$wpdb->options} WHERE option_name = %s",
+        WC_TAX_RETROFIT_LOCK_OPTION
+    ));
+    return $current !== null && (time() - (int) strtok((string) $current, ':')) <= WC_TAX_RETROFIT_LOCK_TTL;
+}
+
+/**
+ * ============================================================================
+ * TABLES TRANSACTIONNELLES (1.4.5)
+ * ============================================================================
+ * Le ROLLBACK ne fonctionne que sur des tables InnoDB. Sur des tables MyISAM,
+ * START TRANSACTION / ROLLBACK sont ignorés SANS ERREUR : un abonnement présentant
+ * un écart serait laissé modifié. Les migrations et annulations sont donc refusées.
+ *
+ * @return array [nom_de_table => moteur] des tables NON transactionnelles (vide = OK)
+ */
+function wc_tax_retrofit_get_non_transactional_tables(): array {
+    static $cached = null;
+    if ($cached !== null) {
+        return $cached;
+    }
+    global $wpdb;
+
+    $tables = array(
+        $wpdb->posts, $wpdb->postmeta,
+        $wpdb->prefix . 'woocommerce_order_items', $wpdb->prefix . 'woocommerce_order_itemmeta',
+        $wpdb->prefix . 'wc_orders', $wpdb->prefix . 'wc_orders_meta',
+        $wpdb->prefix . 'wc_order_addresses', $wpdb->prefix . 'wc_order_operational_data',
+    );
+    $placeholders = implode(', ', array_fill(0, count($tables), '%s'));
+    $rows = $wpdb->get_results($wpdb->prepare(
+        "SELECT TABLE_NAME AS table_name, ENGINE AS engine FROM information_schema.TABLES
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ($placeholders)",
+        $tables
+    ), ARRAY_A);
+
+    $cached = array();
+    foreach ((array) $rows as $row) {
+        if (strtoupper((string) $row['engine']) !== 'INNODB') {
+            $cached[$row['table_name']] = $row['engine'] ?: '?';
+        }
+    }
+
+    /**
+     * Filtre la liste des tables non transactionnelles détectées
+     * (retourner un tableau vide désactive le contrôle, à vos risques)
+     *
+     * @since 1.4.5
+     * @param array $tables [nom_de_table => moteur]
+     */
+    $cached = (array) apply_filters('wc_tax_retrofit_non_transactional_tables', $cached);
+    return $cached;
+}
+
+/**
+ * Message d'erreur listant les tables non transactionnelles
+ */
+function wc_tax_retrofit_non_transactional_message(array $tables): string {
+    $list = array();
+    foreach ($tables as $table => $engine) {
+        $list[] = $table . ' (' . $engine . ')';
+    }
+    return sprintf(
+        /* translators: %s: comma-separated list of tables with their storage engine */
+        __('Migration impossible : ces tables ne sont pas en InnoDB et ne permettent pas l\'annulation (ROLLBACK) : %s. Convertissez-les en InnoDB avant de continuer.', 'wcs-tax-retrofit'),
+        implode(', ', $list)
+    );
+}
+
+/**
+ * ============================================================================
+ * CONVERSION D'UNE COMMANDE / D'UN ABONNEMENT
+ * ============================================================================
+ */
+define('WC_TAX_RETROFIT_SNAPSHOT_META', '_wc_tax_retrofit_original');
+
+/**
+ * Calcule la conversion TTC → HT + TVA d'un abonnement ou d'une commande (sans rien modifier)
+ *
+ * @param WC_Abstract_Order $order    Abonnement ou commande
+ * @param float             $tax_rate Taux décimal (0.20)
+ * @param float             $tolerance Tolérance d'arrondi
+ * @param string|null       $tax_rate_class Classe de taxe du taux appliqué
+ * @return array ['items' => [...], 'coupons' => [...], 'tax' => float, 'notices' => string[], 'rounding_error' => string|null]
+ */
+function wc_tax_retrofit_plan_order_conversion(WC_Abstract_Order $order, float $tax_rate, float $tolerance, ?string $tax_rate_class): array {
+    $plan = array('items' => array(), 'coupons' => array(), 'tax' => 0.0, 'notices' => array(), 'rounding_error' => null);
+    $order_id = $order->get_id();
+
+    foreach ($order->get_items() as $item_id => $item) {
+        $item_ttc = (float) $item->get_total();
+        $item_subtotal_ttc = (float) $item->get_subtotal();
+        if ($item_ttc <= 0 && $item_subtotal_ttc <= 0) continue;
+
+        // Total (après remise) ET sous-total (avant remise) : sinon la remise d'un coupon récurrent est perdue
+        $item_ht = round($item_ttc / (1 + $tax_rate), 2);
+        $item_tax = round($item_ttc - $item_ht, 2);
+        $item_subtotal_ht = round($item_subtotal_ttc / (1 + $tax_rate), 2);
+        $item_subtotal_tax = round($item_subtotal_ttc - $item_subtotal_ht, 2);
+
+        $rounding_diff = abs(($item_ht + $item_tax) - $item_ttc);
+        if ($rounding_diff >= $tolerance) {
+            $plan['rounding_error'] = sprintf(
+                "Écart d'arrondi item #%d (commande #%d): %.4f€ >= %.4f€. TTC: %s, HT: %s, TVA: %s",
+                $item_id, $order_id, $rounding_diff, $tolerance, $item_ttc, $item_ht, $item_tax
+            );
+            return $plan;
+        }
+
+        // La classe de taxe de la ligne est conservée ; on signale si elle diffère de celle du taux appliqué
+        if ($tax_rate_class !== null && (string) $item->get_tax_class() !== $tax_rate_class) {
+            $plan['notices'][] = sprintf(
+                "ℹ️ #%d ligne #%d : classe de taxe '%s' différente de celle du taux appliqué ('%s')",
+                $order_id, $item_id, $item->get_tax_class() ?: 'standard', $tax_rate_class ?: 'standard'
+            );
+        }
+
+        $plan['tax'] += $item_tax;
+        $plan['items'][$item_id] = array(
+            'item' => $item, 'total_ht' => $item_ht, 'tax_amount' => $item_tax,
+            'subtotal_ht' => $item_subtotal_ht, 'subtotal_tax_amount' => $item_subtotal_tax,
         );
     }
-    
+
+    // Coupons : la remise TTC est ventilée en remise HT + TVA
+    if (!empty($plan['items'])) {
+        foreach ($order->get_items('coupon') as $coupon_id => $coupon_item) {
+            $discount_ttc = (float) $coupon_item->get_discount();
+            if ($discount_ttc > 0 && abs((float) $coupon_item->get_discount_tax()) < 0.001) {
+                $discount_ht = round($discount_ttc / (1 + $tax_rate), 2);
+                $plan['coupons'][$coupon_id] = array(
+                    'item' => $coupon_item, 'discount_ht' => $discount_ht,
+                    'discount_tax' => round($discount_ttc - $discount_ht, 2),
+                );
+            }
+        }
+    }
+
+    return $plan;
+}
+
+/**
+ * Applique une conversion calculée par wc_tax_retrofit_plan_order_conversion()
+ *
+ * Les valeurs d'origine sont enregistrées dans la méta _wc_tax_retrofit_original
+ * (permet `wp tax-retrofit revert`). Les lignes sont modifiées EN PLACE : ID, produit,
+ * classe de taxe et métadonnées conservés. Doit être appelée dans une transaction.
+ *
+ * @param WC_Abstract_Order $order
+ * @param array             $plan
+ * @param int|string        $tax_rate_id
+ * @param float             $tax_rate
+ * @param array             $extra_snapshot Données additionnelles stockées dans l'instantané
+ */
+function wc_tax_retrofit_apply_order_conversion(WC_Abstract_Order $order, array $plan, $tax_rate_id, float $tax_rate, array $extra_snapshot = array()): void {
+    $snapshot = array_merge(array(
+        'version' => WC_TAX_RETROFIT_VERSION,
+        'date' => current_time('mysql'),
+        'tax_rate_id' => (int) $tax_rate_id,
+        'rate' => $tax_rate,
+        'total' => (string) $order->get_total(),
+        'prices_include_tax' => (bool) $order->get_prices_include_tax(),
+        'items' => array(),
+        'coupons' => array(),
+    ), $extra_snapshot);
+
+    foreach ($plan['items'] as $item_id => $item_data) {
+        $item = $item_data['item'];
+        $snapshot['items'][$item_id] = array(
+            'subtotal' => (string) $item->get_subtotal(),
+            'total' => (string) $item->get_total(),
+            'taxes' => $item->get_taxes(),
+            'new_subtotal' => $item_data['subtotal_ht'],
+            'new_total' => $item_data['total_ht'],
+        );
+        $item->set_subtotal($item_data['subtotal_ht']);
+        $item->set_total($item_data['total_ht']);
+        $item->set_taxes(array(
+            'total' => array($tax_rate_id => $item_data['tax_amount']),
+            'subtotal' => array($tax_rate_id => $item_data['subtotal_tax_amount']),
+        ));
+    }
+
+    foreach ($plan['coupons'] as $coupon_id => $coupon_data) {
+        $snapshot['coupons'][$coupon_id] = array(
+            'discount' => (string) $coupon_data['item']->get_discount(),
+            'discount_tax' => (string) $coupon_data['item']->get_discount_tax(),
+            'new_discount' => $coupon_data['discount_ht'],
+        );
+        $coupon_data['item']->set_discount($coupon_data['discount_ht']);
+        $coupon_data['item']->set_discount_tax($coupon_data['discount_tax']);
+    }
+
+    $order->update_meta_data(WC_TAX_RETROFIT_SNAPSHOT_META, $snapshot);
+
+    // Le prix des renouvellements manuels (panier WCS) est reconstruit depuis le sous-total HT,
+    // avec ajout de la TVA seulement si "prix TTC" : on aligne ce drapeau sur la boutique.
+    $order->set_prices_include_tax(wc_prices_include_tax());
+
+    // update_taxes() reconstruit les lignes de taxe à partir des montants ci-dessus.
+    // calculate_totals(FALSE) : avec TRUE, WooCommerce recalculerait la TVA selon l'adresse
+    // du client et écraserait le taux choisi (client hors pays, arrondis, port taxé...).
+    $order->update_taxes();
+    $order->calculate_totals(false);
+}
+
+/**
+ * Renouvellements impayés d'un abonnement, encore sans TVA
+ *
+ * Un renouvellement en attente / échoué créé AVANT la migration a été copié depuis
+ * l'abonnement en TTC sans TVA : sans conversion, il serait encaissé sans ventilation.
+ *
+ * @param WC_Subscription $subscription
+ * @return WC_Order[]
+ */
+function wc_tax_retrofit_get_unpaid_renewals(WC_Subscription $subscription): array {
+    /**
+     * Active / désactive la conversion des renouvellements impayés
+     *
+     * @since 1.4.5
+     * @param bool            $enabled      Défaut : true
+     * @param WC_Subscription $subscription
+     */
+    if (!apply_filters('wc_tax_retrofit_process_unpaid_renewals', true, $subscription)) {
+        return array();
+    }
+
+    /**
+     * Statuts de renouvellement considérés comme impayés
+     *
+     * @since 1.4.5
+     * @param string[] $statuses Défaut : pending, failed, on-hold
+     */
+    $statuses = (array) apply_filters('wc_tax_retrofit_renewal_statuses', array('pending', 'failed', 'on-hold'));
+
+    $renewals = array();
+    foreach ($subscription->get_related_orders('ids', 'renewal') as $order_id) {
+        $order = wc_get_order($order_id);
+        if (!$order || !$order->has_status($statuses)) continue;
+        if ((float) $order->get_total_tax() > 0.01 || (float) $order->get_total() <= 0) continue;
+        $renewals[] = $order;
+    }
+    return $renewals;
+}
+
+/**
+ * Stats vides (structure commune à tous les retours de wc_tax_retrofit_process)
+ */
+function wc_tax_retrofit_empty_stats(array $overrides = array()): array {
+    return array_merge(array(
+        'total' => 0, 'batch_size' => 0, 'offset' => 0, 'updated' => 0, 'renewals_updated' => 0,
+        'skipped' => 0, 'errors' => 0, 'details' => array(), 'errors_list' => array(),
+        'tolerance_warnings' => array(), 'has_more' => false, 'csv_data' => array(),
+    ), $overrides);
+}
+
+/**
+ * Point d'entrée web / WP-CLI : contrôle des permissions puis traitement d'un lot
+ *
+ * @param bool $dry_run Simulation (aucune écriture sur les abonnements)
+ * @param int  $offset  Position du lot
+ * @return array Stats (voir wc_tax_retrofit_process_batch)
+ */
+function wc_tax_retrofit_process($dry_run = false, $offset = 0): array {
     // Vérification des permissions et nonce (sauf en contexte WP-CLI)
     $is_cli = defined('WP_CLI') && WP_CLI;
 
@@ -667,45 +1140,98 @@ function wc_tax_retrofit_process($dry_run = false, $offset = 0): array {
             wp_die(esc_html__('Erreur de sécurité : nonce invalide', 'wcs-tax-retrofit'));
         }
     }
-    
+
+    return wc_tax_retrofit_process_batch((bool) $dry_run, (int) $offset);
+}
+
+/**
+ * Moteur : traite un lot de WC_TAX_RETROFIT_BATCH_SIZE abonnements
+ *
+ * Appelé par wc_tax_retrofit_process() (web, WP-CLI) et par la tâche Action Scheduler
+ * (arrière-plan, sans utilisateur connecté ni nonce : les contrôles sont faits au lancement).
+ *
+ * @param bool $dry_run
+ * @param int  $offset
+ * @return array Stats : total, batch_size, offset, updated, renewals_updated, skipped, errors,
+ *               has_more, details[], errors_list[], tolerance_warnings[], csv_data[], (locked, message)
+ */
+function wc_tax_retrofit_process_batch(bool $dry_run = false, int $offset = 0): array {
+    // VÉRIFICATION CRITIQUE : Dépendances
+    if (!wc_tax_retrofit_check_dependencies()) {
+        wc_tax_retrofit_log('ERREUR CRITIQUE : Dépendances manquantes', 'error');
+        return wc_tax_retrofit_empty_stats(array(
+            'errors' => 1,
+            'errors_list' => array(__('Dépendances manquantes (WooCommerce ou WooCommerce Subscriptions)', 'wcs-tax-retrofit')),
+        ));
+    }
+
+    $is_cli = defined('WP_CLI') && WP_CLI;
+
+    // Tables transactionnelles obligatoires pour une exécution réelle (ROLLBACK)
+    $non_transactional = wc_tax_retrofit_get_non_transactional_tables();
+    if (!$dry_run && !empty($non_transactional)) {
+        $message = wc_tax_retrofit_non_transactional_message($non_transactional);
+        wc_tax_retrofit_log($message, 'error');
+        return wc_tax_retrofit_empty_stats(array('errors' => 1, 'errors_list' => array($message), 'fatal' => true));
+    }
+
     // Reprise automatique si offset sauvegardé (et pas d'offset déjà fourni)
     if (!$dry_run && $offset === 0 && get_option('wc_tax_retrofit_current_offset')) {
         $offset = (int) get_option('wc_tax_retrofit_current_offset');
         wc_tax_retrofit_log("Reprise automatique à l'offset $offset");
     }
-    
-    $lock_key = 'wc_tax_retrofit_running';
-    if (get_transient($lock_key)) return array(
-        'locked' => true, 'message' => __('Une mise à jour est déjà en cours.', 'wcs-tax-retrofit'),
-        'total' => 0, 'batch_size' => 0, 'offset' => 0, 'updated' => 0, 'skipped' => 0, 'errors' => 0,
-        'details' => array(), 'errors_list' => array(), 'tolerance_warnings' => array(),
-        'has_more' => false, 'csv_data' => array()
-    );
-    
-    set_transient($lock_key, time(), 5 * MINUTE_IN_SECONDS);
+
+    $lock = wc_tax_retrofit_acquire_lock();
+    if ($lock === null) {
+        return wc_tax_retrofit_empty_stats(array(
+            'locked' => true, 'message' => __('Une mise à jour est déjà en cours.', 'wcs-tax-retrofit'),
+        ));
+    }
+
+    try {
+        $stats = wc_tax_retrofit_process_locked_batch($dry_run, $offset, $lock, $is_cli, $non_transactional);
+    } finally {
+        wc_tax_retrofit_release_lock($lock);
+    }
+
+    return $stats;
+}
+
+/**
+ * Traitement d'un lot, verrou détenu (voir wc_tax_retrofit_process_batch)
+ */
+function wc_tax_retrofit_process_locked_batch(bool $dry_run, int $offset, string &$lock, bool $is_cli, array $non_transactional): array {
+    global $wpdb;
+
     $tolerance = wc_tax_retrofit_get_tolerance();
     $tax_rate = wc_tax_retrofit_get_selected_rate();
-    $current_user = $is_cli ? 'WP-CLI' : wp_get_current_user()->user_login;
+    $user = wp_get_current_user();
+    $current_user = $is_cli ? 'WP-CLI' : ($user->exists() ? $user->user_login : 'Action Scheduler');
     wc_tax_retrofit_log(sprintf('Début (Mode: %s, User: %s, Offset: %d, Tolérance: %s€)',
         $dry_run ? 'DRY-RUN' : 'PROD', $current_user, $offset, $tolerance));
-    
+
     $tax_rate_id = wc_tax_retrofit_get_tax_rate_id();
-    
+
     if ($tax_rate_id === null) {
-        delete_transient($lock_key);
         wc_tax_retrofit_log('ERREUR : Taux de TVA introuvable dans WooCommerce', 'error');
-        return array(
-            'total' => 0, 'batch_size' => 0, 'offset' => 0, 'updated' => 0, 'skipped' => 0, 'errors' => 1,
-            'details' => array(),
+        return wc_tax_retrofit_empty_stats(array(
+            'errors' => 1, 'fatal' => true,
             'errors_list' => array(__('Taux de TVA introuvable dans WooCommerce. Configurez un taux dans WooCommerce → Réglages → Taxes.', 'wcs-tax-retrofit')),
-            'tolerance_warnings' => array(), 'has_more' => false, 'csv_data' => array()
-        );
+        ));
     }
-    
-    @set_time_limit(300);
-    @ini_set('memory_limit', '512M');
-    
-    $args = array(
+
+    if (function_exists('wc_set_time_limit')) {
+        wc_set_time_limit(300);
+    } else {
+        @set_time_limit(300);
+    }
+    // Augmente la mémoire sans jamais la DIMINUER
+    wp_raise_memory_limit('admin');
+
+    // Classe de taxe du taux sélectionné (pour signaler les lignes d'une autre classe)
+    $tax_rate_class = wc_tax_retrofit_get_tax_rate_class($tax_rate_id);
+
+    $subscriptions = wcs_get_subscriptions(array(
         'status' => wc_tax_retrofit_get_subscription_statuses(),
         'date_created' => '<=' . wc_tax_retrofit_get_date_limit(),
         'limit' => WC_TAX_RETROFIT_BATCH_SIZE,
@@ -713,221 +1239,584 @@ function wc_tax_retrofit_process($dry_run = false, $offset = 0): array {
         'orderby' => 'ID',
         'order' => 'ASC',
         'return' => 'objects',
-    );
-    $subscriptions = wcs_get_subscriptions($args);
-    
+    ));
+
     $total_count = null;
     if ($offset === 0) {
         $total_count = wc_tax_retrofit_count_subscriptions();
         wc_tax_retrofit_log('Total abonnements : ' . $total_count);
     }
-    
-    // Structure $stats : total, batch_size, offset, updated, skipped, errors, has_more,
-    // details (string[]), errors_list (string[]), tolerance_warnings (string[]),
-    // csv_data (array[] avec subscription_id, status, customer_id, customer_email,
-    //           original_total, new_total_ht, new_tax, new_total_ttc, date_updated)
-    // Hook : do_action('wc_tax_retrofit_after_process', $stats, $dry_run)
-    $stats = array(
-        'total' => $total_count, 
-        'batch_size' => count($subscriptions), 
-        'offset' => $offset, 
-        'updated' => 0, 
-        'skipped' => 0, 
-        'errors' => 0, 
-        'details' => array(), 
-        'errors_list' => array(), 
-        'tolerance_warnings' => array(),
-        'has_more' => count($subscriptions) === WC_TAX_RETROFIT_BATCH_SIZE, 
-        'csv_data' => array()
-    );
-    
+
+    $stats = wc_tax_retrofit_empty_stats(array(
+        'total' => $total_count,
+        'batch_size' => count($subscriptions),
+        'offset' => $offset,
+        'has_more' => count($subscriptions) === WC_TAX_RETROFIT_BATCH_SIZE,
+    ));
+
+    if ($dry_run && !empty($non_transactional)) {
+        $stats['details'][] = '⚠️ ' . wc_tax_retrofit_non_transactional_message($non_transactional);
+    }
+
     foreach ($subscriptions as $subscription) {
+        wc_tax_retrofit_refresh_lock($lock);
+        $subscription_id = $subscription->get_id();
+
         try {
-            $subscription_id = $subscription->get_id();
             if (!wc_tax_retrofit_validate_subscription($subscription)) {
                 $stats['skipped']++;
                 $stats['details'][] = "⚠️ #$subscription_id ignoré (validation)";
                 continue;
             }
-            
+
             $status = $subscription->get_status();
             $original_total = $subscription->get_total();
             $original_tax = $subscription->get_total_tax();
-            
+
             if ($original_tax > 0.01) {
                 $stats['skipped']++;
                 $stats['details'][] = sprintf("#%d [%s] ignoré (TVA : %.2f€)", $subscription_id, $status, $original_tax);
                 wc_tax_retrofit_log("#$subscription_id déjà migré", 'info');
                 continue;
             }
-            
-            $has_changes = false;
-            $total_tax_calc = 0;
-            $items_to_recreate = array();
-            
-            foreach ($subscription->get_items() as $item_id => $item) {
-                $item_ttc = $item->get_total();
-                if ($item_ttc <= 0) continue;
-                
-                $item_ht = round($item_ttc / (1 + $tax_rate), 2);
-                $item_tax = round($item_ttc - $item_ht, 2);
 
-                $rounding_diff = abs(($item_ht + $item_tax) - $item_ttc);
-                
-                if ($rounding_diff >= $tolerance) {
-                    $warning_msg = sprintf(
-                        "Écart d'arrondi item #%d (abonnement #%d): %.4f€ >= %.4f€. TTC: %s, HT: %s, TVA: %s",
-                        $item_id, $subscription_id, $rounding_diff, $tolerance, $item_ttc, $item_ht, $item_tax
-                    );
-                    $stats['tolerance_warnings'][] = $warning_msg;
-                    wc_tax_retrofit_log($warning_msg, 'warning');
-                    
-                    // Écart d'arrondi à la limite : ignorer cet abonnement entier
-                    $stats['skipped']++;
-                    $stats['details'][] = sprintf("⚠️ #%d ignoré (écart item #%d: %.4f€)", $subscription_id, $item_id, $rounding_diff);
-                    continue 2; // Continue la boucle externe (subscriptions)
-                }
-                
-                $total_tax_calc += $item_tax;
-                $items_to_recreate[] = array(
-                    'old_item_id' => $item_id, 'product_id' => $item->get_product_id(), 'variation_id' => $item->get_variation_id(),
-                    'quantity' => $item->get_quantity(), 'name' => $item->get_name(), 'total_ht' => $item_ht,
-                    'tax_amount' => $item_tax, 'original_total_ttc' => $item_ttc, 'meta_data' => $item->get_meta_data()
-                );
-                $has_changes = true;
+            $plan = wc_tax_retrofit_plan_order_conversion($subscription, $tax_rate, $tolerance, $tax_rate_class);
+
+            if ($plan['rounding_error'] !== null) {
+                $stats['tolerance_warnings'][] = $plan['rounding_error'];
+                wc_tax_retrofit_log($plan['rounding_error'], 'warning');
+                $stats['skipped']++;
+                $stats['details'][] = sprintf("⚠️ #%d ignoré (écart d'arrondi)", $subscription_id);
+                continue;
             }
-            
-            if ($has_changes && !$dry_run) {
-                global $wpdb;
-                $wpdb->query('START TRANSACTION');
 
-                try {
-                    foreach ($items_to_recreate as $item_data) $subscription->remove_item($item_data['old_item_id']);
+            if (empty($plan['items'])) {
+                continue;
+            }
 
-                    foreach ($items_to_recreate as $item_data) {
-                        $new_item = new WC_Order_Item_Product();
-                        $new_item->set_product_id($item_data['product_id']);
-                        $new_item->set_variation_id($item_data['variation_id']);
-                        $new_item->set_quantity($item_data['quantity']);
-                        $new_item->set_name($item_data['name']);
-                        $new_item->set_subtotal($item_data['total_ht']);
-                        $new_item->set_total($item_data['total_ht']);
+            foreach ($plan['notices'] as $notice) {
+                $stats['details'][] = $notice;
+                wc_tax_retrofit_log($notice, 'notice');
+            }
 
-                        $tax_data = array(
-                            'total' => array($tax_rate_id => $item_data['tax_amount']),
-                            'subtotal' => array($tax_rate_id => $item_data['tax_amount'])
-                        );
-                        $new_item->set_taxes($tax_data);
-
-                        foreach ($item_data['meta_data'] as $meta) {
-                            $new_item->add_meta_data($meta->key, $meta->value, false);
-                        }
-                        $subscription->add_item($new_item);
-                    }
-
-                    $subscription->update_taxes();
-                    $subscription->calculate_totals();
-                    $subscription->save();
-
-                    $new_total = $subscription->get_total();
-                    $new_tax = $subscription->get_total_tax();
-
-                    $total_diff = abs($new_total - $original_total);
-
-                    if ($total_diff >= $tolerance) {
-                        $wpdb->query('ROLLBACK');
-                        $warning_msg = sprintf(
-                            "Écart total abonnement #%d: %.4f€ >= %.4f€. Avant: %s, Après: %s",
-                            $subscription_id, $total_diff, $tolerance, $original_total, $new_total
-                        );
-                        $stats['tolerance_warnings'][] = $warning_msg;
-                        wc_tax_retrofit_log($warning_msg, 'warning');
-
-                        $stats['skipped']++;
-                        $stats['details'][] = sprintf("⚠️ #%d ignoré (écart: %.4f€)", $subscription_id, $total_diff);
-                        continue;
-                    }
-
-                    $wpdb->query('COMMIT');
-                } catch (\Throwable $tx_error) {
-                    $wpdb->query('ROLLBACK');
-                    $stats['errors']++;
-                    $error = sprintf("Erreur transaction #%d : %s", $subscription_id, $tx_error->getMessage());
-                    $stats['errors_list'][] = $error;
-                    wc_tax_retrofit_log($error, 'error');
-                    continue;
+            // Renouvellements impayés (créés avant la migration, encore en TTC sans TVA)
+            $renewal_plans = array();
+            foreach (wc_tax_retrofit_get_unpaid_renewals($subscription) as $renewal) {
+                $renewal_plan = wc_tax_retrofit_plan_order_conversion($renewal, $tax_rate, $tolerance, $tax_rate_class);
+                if ($renewal_plan['rounding_error'] === null && !empty($renewal_plan['items'])) {
+                    $renewal_plans[] = array('order' => $renewal, 'plan' => $renewal_plan, 'total' => $renewal->get_total());
                 }
+            }
 
-                $subscription->add_order_note(sprintf('[Tax Retrofit v%s] TTC→HT+TVA. Total: %s (TVA: %s). Par: %s',
-                    WC_TAX_RETROFIT_VERSION, wc_price($new_total), wc_price($new_tax), $current_user));
-
-                wc_tax_retrofit_log(sprintf('#%d MAJ - Total: %s, TVA: %s', $subscription_id, $new_total, $new_tax));
-
-                $stats['details'][] = sprintf("✓ #%d [%s] - %.2f€ (TVA: %.2f€)", $subscription_id, $status, $new_total, $new_tax);
+            if ($dry_run) {
+                // Même calcul que l'exécution réelle : seule la TVA des lignes produits est
+                // extraite, le port et les frais restent inchangés (le total TTC est conservé)
+                $ht_calculated = round((float) $original_total - $plan['tax'], 2);
+                $stats['details'][] = sprintf("🔍 [DRY-RUN] #%d [%s] - %.2f€ → HT: %.2f€ + TVA: %.2f€%s",
+                    $subscription_id, $status, $original_total, $ht_calculated, $plan['tax'],
+                    $renewal_plans ? sprintf(' + %d renouvellement(s) impayé(s) : #%s', count($renewal_plans), implode(', #', array_map(fn($r) => $r['order']->get_id(), $renewal_plans))) : '');
                 $stats['csv_data'][] = array(
                     'subscription_id' => $subscription_id, 'status' => $status, 'customer_id' => $subscription->get_customer_id(),
                     'customer_email' => $subscription->get_billing_email(), 'original_total' => $original_total,
-                    'new_total_ht' => $new_total - $new_tax, 'new_tax' => $new_tax, 'new_total_ttc' => $new_total, 'date_updated' => current_time('mysql')
+                    'new_total_ht' => $ht_calculated, 'new_tax' => $plan['tax'],
+                    'new_total_ttc' => $original_total, 'date_updated' => current_time('mysql')
                 );
-            }
-            
-            if ($has_changes) {
-                if ($dry_run) {
-                    $ht_calculated = round($original_total / (1 + $tax_rate), 2);
-                    $stats['details'][] = sprintf("🔍 [DRY-RUN] #%d [%s] - %.2f€ → HT: %.2f€ + TVA: %.2f€",
-                        $subscription_id, $status, $original_total, $ht_calculated, $total_tax_calc);
-                    $stats['csv_data'][] = array(
-                        'subscription_id' => $subscription_id, 'status' => $status, 'customer_id' => $subscription->get_customer_id(),
-                        'customer_email' => $subscription->get_billing_email(), 'original_total' => $original_total,
-                        'new_total_ht' => $ht_calculated, 'new_tax' => $total_tax_calc,
-                        'new_total_ttc' => $original_total, 'date_updated' => current_time('mysql')
-                    );
-                }
                 $stats['updated']++;
+                $stats['renewals_updated'] += count($renewal_plans);
+                continue;
             }
+
+            $wpdb->query('START TRANSACTION');
+            $touched_ids = array($subscription_id);
+
+            try {
+                wc_tax_retrofit_apply_order_conversion($subscription, $plan, $tax_rate_id, $tax_rate, array(
+                    'renewals' => array_map(fn($r) => $r['order']->get_id(), $renewal_plans),
+                ));
+
+                $new_total = $subscription->get_total();
+                $new_tax = $subscription->get_total_tax();
+                $total_diff = abs(round((float) $new_total - (float) $original_total, 4));
+                $failed_diff = $total_diff >= $tolerance ? array($subscription_id, $total_diff, $original_total, $new_total) : null;
+
+                // Renouvellements impayés : même transaction, même contrôle du total
+                foreach ($renewal_plans as $renewal_data) {
+                    if ($failed_diff !== null) break;
+                    $renewal = $renewal_data['order'];
+                    $touched_ids[] = $renewal->get_id();
+                    wc_tax_retrofit_apply_order_conversion($renewal, $renewal_data['plan'], $tax_rate_id, $tax_rate, array(
+                        'subscription_id' => $subscription_id,
+                    ));
+                    $renewal_diff = abs(round((float) $renewal->get_total() - (float) $renewal_data['total'], 4));
+                    if ($renewal_diff >= $tolerance) {
+                        $failed_diff = array($renewal->get_id(), $renewal_diff, $renewal_data['total'], $renewal->get_total());
+                    }
+                }
+
+                if ($failed_diff !== null) {
+                    $wpdb->query('ROLLBACK');
+                    array_map('wc_tax_retrofit_flush_subscription_cache', $touched_ids);
+                    $warning_msg = vsprintf("Écart total commande #%d: %.4f€ >= " . sprintf('%.4f', $tolerance) . "€. Avant: %s, Après: %s", $failed_diff);
+                    $stats['tolerance_warnings'][] = $warning_msg;
+                    wc_tax_retrofit_log($warning_msg, 'warning');
+
+                    $stats['skipped']++;
+                    $stats['details'][] = sprintf("⚠️ #%d ignoré (écart: %.4f€ sur #%d)", $subscription_id, $failed_diff[1], $failed_diff[0]);
+                    continue;
+                }
+
+                $wpdb->query('COMMIT');
+            } catch (\Throwable $tx_error) {
+                $wpdb->query('ROLLBACK');
+                array_map('wc_tax_retrofit_flush_subscription_cache', $touched_ids);
+                $stats['errors']++;
+                $error = sprintf("Erreur transaction #%d : %s", $subscription_id, $tx_error->getMessage());
+                $stats['errors_list'][] = $error;
+                wc_tax_retrofit_log($error, 'error');
+                continue;
+            }
+
+            $subscription->add_order_note(sprintf('[Tax Retrofit v%s] TTC→HT+TVA. Total: %s (TVA: %s). Par: %s%s',
+                WC_TAX_RETROFIT_VERSION, wc_price($new_total), wc_price($new_tax), $current_user,
+                $renewal_plans ? sprintf(' — %d renouvellement(s) impayé(s) converti(s) : #%s', count($renewal_plans), implode(', #', array_map(fn($r) => $r['order']->get_id(), $renewal_plans))) : ''));
+            foreach ($renewal_plans as $renewal_data) {
+                $renewal_data['order']->add_order_note(sprintf('[Tax Retrofit v%s] TTC→HT+TVA (renouvellement impayé de l\'abonnement #%d). Total: %s (TVA: %s). Par: %s',
+                    WC_TAX_RETROFIT_VERSION, $subscription_id, wc_price($renewal_data['order']->get_total()), wc_price($renewal_data['order']->get_total_tax()), $current_user));
+            }
+
+            wc_tax_retrofit_log(sprintf('#%d MAJ - Total: %s, TVA: %s, renouvellements impayés: %d', $subscription_id, $new_total, $new_tax, count($renewal_plans)));
+
+            $stats['details'][] = sprintf("✓ #%d [%s] - %.2f€ (TVA: %.2f€)%s", $subscription_id, $status, $new_total, $new_tax,
+                $renewal_plans ? sprintf(' + %d renouvellement(s) impayé(s)', count($renewal_plans)) : '');
+            $stats['csv_data'][] = array(
+                'subscription_id' => $subscription_id, 'status' => $status, 'customer_id' => $subscription->get_customer_id(),
+                'customer_email' => $subscription->get_billing_email(), 'original_total' => $original_total,
+                'new_total_ht' => $new_total - $new_tax, 'new_tax' => $new_tax, 'new_total_ttc' => $new_total, 'date_updated' => current_time('mysql')
+            );
+            $stats['updated']++;
+            $stats['renewals_updated'] += count($renewal_plans);
         } catch (\Throwable $e) {
             $stats['errors']++;
-            $error = sprintf("Erreur #%d : %s", $subscription_id ?? '?', $e->getMessage());
+            $error = sprintf("Erreur #%d : %s", $subscription_id, $e->getMessage());
             $stats['errors_list'][] = $error;
             wc_tax_retrofit_log($error, 'error');
         }
     }
-    
+
     // Sauvegarder l'offset pour reprise en cas d'interruption
     if (!$dry_run && $stats['has_more']) {
         update_option('wc_tax_retrofit_current_offset', $offset + $stats['batch_size']);
         update_option('wc_tax_retrofit_last_activity', time());
     }
 
-    delete_transient($lock_key);
-
     if (!empty($stats['csv_data'])) {
         $user_id = get_current_user_id();
         $csv_key = 'wc_tax_retrofit_csv_' . $user_id;
         $existing = get_transient($csv_key) ?: array();
         set_transient($csv_key, [...$existing, ...$stats['csv_data']], DAY_IN_SECONDS);
+        wc_tax_retrofit_register_csv_user($user_id);
     }
-    
-    wc_tax_retrofit_log(sprintf('Fin batch %d - Traités: %d, MAJ: %d, Ignorés: %d, Erreurs: %d, Alertes tolérance: %d', 
-        $offset, $stats['batch_size'], $stats['updated'], $stats['skipped'], $stats['errors'], count($stats['tolerance_warnings'])));
-    
+
+    wc_tax_retrofit_log(sprintf('Fin batch %d - Traités: %d, MAJ: %d (+%d renouvellements), Ignorés: %d, Erreurs: %d, Alertes tolérance: %d',
+        $offset, $stats['batch_size'], $stats['updated'], $stats['renewals_updated'], $stats['skipped'], $stats['errors'], count($stats['tolerance_warnings'])));
+
     /**
      * Hook déclenché après le traitement d'un batch
-     * 
-     * Permet aux développeurs d'intercepter les statistiques pour:
-     * - Logger les alertes de tolérance dans un système externe
-     * - Envoyer des notifications si trop d'alertes
-     * - Parser et analyser les écarts détectés
-     * - Déclencher des workflows personnalisés
-     * 
-     * @param array $stats    Tableau de statistiques (voir doc structure ci-dessus)
+     *
+     * @param array $stats    Tableau de statistiques
      * @param bool  $dry_run  True si simulation, False si exécution réelle
-     * 
+     *
      * @since 1.1.0
      */
     do_action('wc_tax_retrofit_after_process', $stats, $dry_run);
-    
+
     return $stats;
+}
+
+/**
+ * ============================================================================
+ * ANNULATION (wp tax-retrofit revert) (1.4.5)
+ * ============================================================================
+ */
+
+/**
+ * IDs des abonnements migrés (porteurs de l'instantané _wc_tax_retrofit_original)
+ *
+ * @return int[]
+ */
+function wc_tax_retrofit_get_migrated_subscription_ids(): array {
+    // Avec le stockage classique (posts), wc_get_orders() IGNORE l'argument meta_query (WooCommerce le
+    // signale par un avertissement) et renverrait TOUS les abonnements. wcs_get_orders_with_meta_query()
+    // (WooCommerce Subscriptions) gère les deux stockages.
+    $ids = wcs_get_orders_with_meta_query(array(
+        'type' => 'shop_subscription',
+        'status' => array_keys(wcs_get_subscription_statuses()),
+        'limit' => -1,
+        'return' => 'ids',
+        'orderby' => 'ID',
+        'order' => 'ASC',
+        'meta_query' => array(array('key' => WC_TAX_RETROFIT_SNAPSHOT_META, 'compare' => 'EXISTS')),
+    ));
+
+    // Garde-fou : ne jamais retourner un abonnement sans instantané, quel que soit le stockage
+    $migrated = array();
+    foreach ((array) $ids as $id) {
+        $subscription = wcs_get_subscription((int) $id);
+        if ($subscription && is_array($subscription->get_meta(WC_TAX_RETROFIT_SNAPSHOT_META, true))) {
+            $migrated[] = (int) $id;
+        }
+    }
+    return $migrated;
+}
+
+/**
+ * Restaure les valeurs d'origine d'un abonnement ou d'une commande (sans transaction)
+ *
+ * Refuse si l'objet a été modifié depuis la migration (ligne supprimée, montant changé...)
+ *
+ * @param WC_Abstract_Order $order
+ * @param bool              $dry_run Vérifier uniquement
+ * @return string|null null si OK, sinon le motif du refus
+ */
+function wc_tax_retrofit_revert_order(WC_Abstract_Order $order, bool $dry_run = false): ?string {
+    $snapshot = $order->get_meta(WC_TAX_RETROFIT_SNAPSHOT_META, true);
+    if (!is_array($snapshot) || empty($snapshot['items'])) {
+        return sprintf('#%d : aucune donnée d\'origine enregistrée', $order->get_id());
+    }
+
+    // get_item($id, false) : objets de la commande elle-même. Sans le 2e argument, WooCommerce
+    // recharge un objet NEUF depuis la base : les set_*() seraient faits sur un objet détaché,
+    // jamais enregistré par $order->save() (l'annulation ne changerait rien).
+    foreach ($snapshot['items'] as $item_id => $original) {
+        $item = $order->get_item($item_id, false);
+        if (!$item) {
+            return sprintf('#%d : ligne #%d supprimée depuis la migration', $order->get_id(), $item_id);
+        }
+        if (abs((float) $item->get_total() - (float) $original['new_total']) >= 0.005
+            || abs((float) $item->get_subtotal() - (float) $original['new_subtotal']) >= 0.005) {
+            return sprintf('#%d : ligne #%d modifiée depuis la migration', $order->get_id(), $item_id);
+        }
+    }
+    foreach ((array) ($snapshot['coupons'] ?? array()) as $coupon_id => $original) {
+        $coupon = $order->get_item($coupon_id, false);
+        if (!$coupon || abs((float) $coupon->get_discount() - (float) $original['new_discount']) >= 0.005) {
+            return sprintf('#%d : coupon #%d modifié depuis la migration', $order->get_id(), $coupon_id);
+        }
+    }
+
+    if ($dry_run) {
+        return null;
+    }
+
+    foreach ($snapshot['items'] as $item_id => $original) {
+        $item = $order->get_item($item_id, false);
+        $item->set_subtotal($original['subtotal']);
+        $item->set_total($original['total']);
+        $item->set_taxes(is_array($original['taxes']) ? $original['taxes'] : false);
+    }
+    foreach ((array) ($snapshot['coupons'] ?? array()) as $coupon_id => $original) {
+        $coupon = $order->get_item($coupon_id, false);
+        $coupon->set_discount($original['discount']);
+        $coupon->set_discount_tax($original['discount_tax']);
+    }
+
+    $order->set_prices_include_tax(!empty($snapshot['prices_include_tax']));
+    $order->delete_meta_data(WC_TAX_RETROFIT_SNAPSHOT_META);
+    $order->update_taxes();
+    $order->calculate_totals(false);
+
+    if (abs(round((float) $order->get_total() - (float) $snapshot['total'], 4)) >= 0.01) {
+        return sprintf('#%d : total après annulation (%s) différent du total d\'origine (%s)', $order->get_id(), $order->get_total(), $snapshot['total']);
+    }
+    // Contrôle des lignes elles-mêmes : un total inchangé ne prouve pas que les lignes ont été restaurées
+    foreach ($snapshot['items'] as $item_id => $original) {
+        $item = $order->get_item($item_id, false);
+        if (!$item || abs((float) $item->get_total() - (float) $original['total']) >= 0.005
+            || abs((float) $item->get_subtotal() - (float) $original['subtotal']) >= 0.005) {
+            return sprintf('#%d : ligne #%d non restaurée', $order->get_id(), $item_id);
+        }
+    }
+    return null;
+}
+
+/**
+ * Annule la migration d'un abonnement et de ses renouvellements impayés convertis
+ *
+ * @param int    $subscription_id
+ * @param bool   $dry_run
+ * @param string $by Auteur (note)
+ * @return array ['ok' => bool, 'message' => string, 'renewals' => int]
+ */
+function wc_tax_retrofit_revert_subscription(int $subscription_id, bool $dry_run, string $by): array {
+    global $wpdb;
+    $subscription = wcs_get_subscription($subscription_id);
+    if (!$subscription) {
+        return array('ok' => false, 'message' => sprintf('#%d : abonnement introuvable', $subscription_id), 'renewals' => 0);
+    }
+
+    $snapshot = $subscription->get_meta(WC_TAX_RETROFIT_SNAPSHOT_META, true);
+    $renewals = array();
+    $kept = array();
+    foreach ((array) ($snapshot['renewals'] ?? array()) as $renewal_id) {
+        $renewal = wc_get_order($renewal_id);
+        if (!$renewal || !$renewal->get_meta(WC_TAX_RETROFIT_SNAPSHOT_META, true)) continue;
+        // Un renouvellement payé depuis la migration fait partie de l'historique : il n'est pas modifié
+        if (!$renewal->has_status((array) apply_filters('wc_tax_retrofit_renewal_statuses', array('pending', 'failed', 'on-hold')))) {
+            $kept[] = $renewal_id;
+            continue;
+        }
+        $renewals[] = $renewal;
+    }
+
+    if ($dry_run) {
+        foreach (array_merge(array($subscription), $renewals) as $order) {
+            if (($reason = wc_tax_retrofit_revert_order($order, true)) !== null) {
+                return array('ok' => false, 'message' => $reason, 'renewals' => 0);
+            }
+        }
+        return array('ok' => true, 'message' => '', 'renewals' => count($renewals), 'kept' => $kept);
+    }
+
+    $wpdb->query('START TRANSACTION');
+    $touched = array($subscription_id);
+    try {
+        $reason = wc_tax_retrofit_revert_order($subscription);
+        foreach ($renewals as $renewal) {
+            if ($reason !== null) break;
+            $touched[] = $renewal->get_id();
+            $reason = wc_tax_retrofit_revert_order($renewal);
+        }
+        if ($reason !== null) {
+            $wpdb->query('ROLLBACK');
+            array_map('wc_tax_retrofit_flush_subscription_cache', $touched);
+            return array('ok' => false, 'message' => $reason, 'renewals' => 0);
+        }
+        $wpdb->query('COMMIT');
+    } catch (\Throwable $e) {
+        $wpdb->query('ROLLBACK');
+        array_map('wc_tax_retrofit_flush_subscription_cache', $touched);
+        return array('ok' => false, 'message' => sprintf('#%d : %s', $subscription_id, $e->getMessage()), 'renewals' => 0);
+    }
+
+    $subscription->add_order_note(sprintf('[Tax Retrofit v%s] Migration annulée : retour au TTC sans TVA. Total: %s. Par: %s',
+        WC_TAX_RETROFIT_VERSION, wc_price($subscription->get_total()), $by));
+    foreach ($renewals as $renewal) {
+        $renewal->add_order_note(sprintf('[Tax Retrofit v%s] Migration annulée : retour au TTC sans TVA. Par: %s', WC_TAX_RETROFIT_VERSION, $by));
+    }
+    wc_tax_retrofit_log(sprintf('#%d migration annulée (%d renouvellement(s))', $subscription_id, count($renewals)));
+
+    return array('ok' => true, 'message' => '', 'renewals' => count($renewals), 'kept' => $kept);
+}
+
+/**
+ * ============================================================================
+ * TRAITEMENT EN ARRIÈRE-PLAN (Action Scheduler) (1.4.5)
+ * ============================================================================
+ * La migration réelle lancée depuis l'interface web s'exécute en tâches Action
+ * Scheduler (fourni par WooCommerce) : un lot par tâche, la tâche suivante étant
+ * programmée à la fin de chaque lot. Fermer la page n'interrompt plus la migration.
+ * Nécessite que WP-Cron ou un vrai cron serveur tourne (comme toutes les tâches WooCommerce).
+ */
+define('WC_TAX_RETROFIT_BG_HOOK', 'wc_tax_retrofit_bg_batch');
+define('WC_TAX_RETROFIT_BG_GROUP', 'wcs-tax-retrofit');
+define('WC_TAX_RETROFIT_BG_STATE', 'wc_tax_retrofit_bg_state');
+
+/**
+ * Action Scheduler disponible (et arrière-plan non désactivé par filtre)
+ */
+function wc_tax_retrofit_background_available(): bool {
+    /**
+     * Active / désactive la migration web en arrière-plan
+     *
+     * @since 1.4.5
+     * @param bool $enabled Défaut : true si Action Scheduler est disponible
+     */
+    return function_exists('as_enqueue_async_action') && function_exists('as_unschedule_all_actions')
+        && (bool) apply_filters('wc_tax_retrofit_use_background', true);
+}
+
+/**
+ * État de la migration en arrière-plan (lecture directe en base, jamais via un cache périmé)
+ */
+function wc_tax_retrofit_bg_get_state(): array {
+    wp_cache_delete(WC_TAX_RETROFIT_BG_STATE, 'options');
+    $state = get_option(WC_TAX_RETROFIT_BG_STATE, array());
+    return is_array($state) ? $state : array();
+}
+
+function wc_tax_retrofit_bg_save_state(array $state): void {
+    $state['updated_at'] = time();
+    update_option(WC_TAX_RETROFIT_BG_STATE, $state, false);
+}
+
+function wc_tax_retrofit_bg_is_running(): bool {
+    return (wc_tax_retrofit_bg_get_state()['status'] ?? '') === 'running';
+}
+
+/**
+ * Programme une tâche de lot
+ *
+ * @param int $delay Délai en secondes (0 = dès que possible)
+ * @param int $sequence Numéro de lot (rend chaque tâche distincte dans Action Scheduler)
+ */
+function wc_tax_retrofit_bg_schedule(int $delay, int $sequence): void {
+    $args = array('batch' => $sequence);
+    if ($delay > 0) {
+        as_schedule_single_action(time() + $delay, WC_TAX_RETROFIT_BG_HOOK, $args, WC_TAX_RETROFIT_BG_GROUP);
+    } else {
+        as_enqueue_async_action(WC_TAX_RETROFIT_BG_HOOK, $args, WC_TAX_RETROFIT_BG_GROUP);
+    }
+}
+
+/**
+ * Lance la migration réelle en arrière-plan
+ *
+ * @param int $user_id Utilisateur ayant lancé la migration (CSV, notes)
+ * @return bool false si une migration est déjà en cours
+ */
+function wc_tax_retrofit_bg_start(int $user_id): bool {
+    if (wc_tax_retrofit_bg_is_running() || wc_tax_retrofit_is_locked()) {
+        return false;
+    }
+    wc_tax_retrofit_bg_save_state(array(
+        'status' => 'running',
+        'user_id' => $user_id,
+        'started_at' => time(),
+        'offset' => (int) get_option('wc_tax_retrofit_current_offset', 0),
+        'total' => wc_tax_retrofit_count_subscriptions(),
+        'updated' => (int) get_option('wc_tax_retrofit_partial_count', 0),
+        'renewals' => 0, 'skipped' => 0, 'errors' => 0, 'batches' => 0,
+        'errors_list' => array(), 'tolerance_warnings' => array(), 'message' => '',
+    ));
+    wc_tax_retrofit_bg_schedule(0, 1);
+    wc_tax_retrofit_log(sprintf('Migration en arrière-plan lancée par l\'utilisateur #%d', $user_id));
+    return true;
+}
+
+/**
+ * Annule la migration en arrière-plan (le lot en cours se termine normalement)
+ */
+function wc_tax_retrofit_bg_cancel(): void {
+    $state = wc_tax_retrofit_bg_get_state();
+    if (($state['status'] ?? '') === 'running') {
+        $state['status'] = 'cancelled';
+        wc_tax_retrofit_bg_save_state($state);
+    }
+    if (function_exists('as_unschedule_all_actions')) {
+        as_unschedule_all_actions(WC_TAX_RETROFIT_BG_HOOK); // hook seul : avec arguments vides, AS ne supprimerait que les tâches sans arguments
+    }
+    wc_tax_retrofit_log('Migration en arrière-plan annulée');
+}
+
+/**
+ * Tâche Action Scheduler : traite un lot puis programme le suivant
+ */
+function wc_tax_retrofit_bg_run_batch(): void {
+    $state = wc_tax_retrofit_bg_get_state();
+    if (($state['status'] ?? '') !== 'running') {
+        return;
+    }
+
+    // Exécute le lot au nom de l'utilisateur qui a lancé la migration (CSV, notes "Par:")
+    wp_set_current_user((int) $state['user_id']);
+
+    try {
+        $stats = wc_tax_retrofit_process_batch(false, (int) $state['offset']);
+    } catch (\Throwable $e) {
+        $state['status'] = 'failed';
+        $state['message'] = $e->getMessage();
+        wc_tax_retrofit_bg_save_state($state);
+        wc_tax_retrofit_log('Arrière-plan : erreur fatale : ' . $e->getMessage(), 'error');
+        return;
+    }
+
+    if (!empty($stats['locked'])) {
+        // Une autre exécution (WP-CLI...) détient le verrou : réessayer dans 30 s
+        wc_tax_retrofit_bg_schedule(30, (int) $state['batches'] + 1);
+        return;
+    }
+
+    if (!empty($stats['fatal'])) {
+        $state['status'] = 'failed';
+        $state['message'] = implode(' ', $stats['errors_list']);
+        wc_tax_retrofit_bg_save_state($state);
+        return;
+    }
+
+    $state['batches'] = (int) $state['batches'] + 1;
+    $state['offset'] = (int) $stats['offset'] + (int) $stats['batch_size'];
+    foreach (array('updated' => 'updated', 'renewals' => 'renewals_updated', 'skipped' => 'skipped', 'errors' => 'errors') as $key => $stat_key) {
+        $state[$key] = (int) $state[$key] + (int) $stats[$stat_key];
+    }
+    // Listes plafonnées (l'option reste petite ; le détail complet est dans les logs WooCommerce)
+    $state['errors_list'] = array_slice(array_merge($state['errors_list'], $stats['errors_list']), 0, 200);
+    $state['tolerance_warnings'] = array_slice(array_merge($state['tolerance_warnings'], $stats['tolerance_warnings']), 0, 200);
+
+    // Annulation demandée pendant le lot ?
+    $cancelled = (wc_tax_retrofit_bg_get_state()['status'] ?? '') === 'cancelled';
+
+    if ($cancelled) {
+        $state['status'] = 'cancelled';
+        update_option('wc_tax_retrofit_partial_count', $state['updated']);
+    } elseif (!empty($stats['has_more'])) {
+        update_option('wc_tax_retrofit_partial_count', $state['updated']);
+        wc_tax_retrofit_bg_schedule(0, $state['batches'] + 1);
+    } else {
+        $state['status'] = 'completed';
+        $state['completed_at'] = time();
+        update_option('wc_tax_retrofit_executed', true);
+        update_option('wc_tax_retrofit_date', current_time('mysql'));
+        update_option('wc_tax_retrofit_count', $state['updated']);
+        delete_option('wc_tax_retrofit_partial_count');
+        delete_option('wc_tax_retrofit_current_offset');
+        delete_option('wc_tax_retrofit_last_activity');
+        wc_tax_retrofit_log(sprintf('Migration en arrière-plan terminée : %d abonnements, %d renouvellements', $state['updated'], $state['renewals']));
+    }
+
+    wc_tax_retrofit_bg_save_state($state);
+}
+add_action(WC_TAX_RETROFIT_BG_HOOK, 'wc_tax_retrofit_bg_run_batch');
+
+/**
+ * Enregistre l'ID d'un utilisateur possédant un transient CSV
+ *
+ * Avec un cache objet persistant (Redis Object Cache, Memcached...), les transients ne sont
+ * PAS stockés dans wp_options : impossible de les retrouver par une requête SQL LIKE.
+ * Ce registre permet à la désactivation et à uninstall.php de les supprimer un par un.
+ *
+ * @param int $user_id ID utilisateur (0 = WP-CLI sans --user)
+ */
+function wc_tax_retrofit_register_csv_user(int $user_id): void {
+    $users = get_option('wc_tax_retrofit_csv_users', array());
+    $users = is_array($users) ? array_map('intval', $users) : array();
+    if (!in_array($user_id, $users, true)) {
+        $users[] = $user_id;
+        update_option('wc_tax_retrofit_csv_users', $users, false);
+    }
+}
+
+/**
+ * Supprime tous les transients CSV (registre + administrateurs WooCommerce + WP-CLI),
+ * puis filet de sécurité SQL pour les installations sans cache objet persistant
+ */
+function wc_tax_retrofit_delete_all_csv_transients(): void {
+    global $wpdb;
+
+    $registered = get_option('wc_tax_retrofit_csv_users', array());
+    $user_ids = array_merge(
+        array(0),
+        is_array($registered) ? array_map('intval', $registered) : array(),
+        array_map('intval', get_users(array('capability' => 'manage_woocommerce', 'fields' => 'ID')))
+    );
+    foreach (array_unique($user_ids) as $user_id) {
+        delete_transient('wc_tax_retrofit_csv_' . $user_id);
+    }
+    delete_option('wc_tax_retrofit_csv_users');
+
+    $like_csv = $wpdb->esc_like('_transient_wc_tax_retrofit_csv_') . '%';
+    $like_timeout = $wpdb->esc_like('_transient_timeout_wc_tax_retrofit_csv_') . '%';
+    $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", $like_csv));
+    $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", $like_timeout));
 }
 
 function wc_tax_retrofit_export_csv(): void {
@@ -982,12 +1871,12 @@ function wc_tax_retrofit_export_csv(): void {
         __('Nouvelle TVA', 'wcs-tax-retrofit'),
         __('Nouveau Total TTC', 'wcs-tax-retrofit'),
         __('Date Modification', 'wcs-tax-retrofit')
-    ), ';');
+    ), ';', '"', '\\');
     
     foreach ($csv_data as $row) {
         fputcsv($output, array($row['subscription_id'], $row['status'], $row['customer_id'], $row['customer_email'],
             number_format($row['original_total'], 2, ',', ''), number_format($row['new_total_ht'], 2, ',', ''),
-            number_format($row['new_tax'], 2, ',', ''), number_format($row['new_total_ttc'], 2, ',', ''), $row['date_updated']), ';');
+            number_format($row['new_tax'], 2, ',', ''), number_format($row['new_total_ttc'], 2, ',', ''), $row['date_updated']), ';', '"', '\\');
     }
     fclose($output);
     wc_tax_retrofit_log('Export CSV : ' . count($csv_data) . ' lignes');
@@ -1057,7 +1946,7 @@ function wc_tax_retrofit_display_results($stats, $dry_run = false): void {
         echo "<p><strong>💡 " . esc_html__('Que faire ?', 'wcs-tax-retrofit') . "</strong></p>";
         echo "<ul style='margin:10px 0'>";
         echo "<li>" . esc_html__('Ces écarts sont dus aux arrondis de TVA', 'wcs-tax-retrofit') . "</li>";
-        echo "<li>" . sprintf(__('Ils sont comptés dans %1$s, pas dans %2$s', 'wcs-tax-retrofit'), '<strong>⊗ ' . esc_html__('Ignorés', 'wcs-tax-retrofit') . '</strong>', '<strong>✗ ' . esc_html__('Erreurs', 'wcs-tax-retrofit') . '</strong>') . "</li>";
+        echo "<li>" . wp_kses_post(sprintf(__('Ils sont comptés dans %1$s, pas dans %2$s', 'wcs-tax-retrofit'), '<strong>⊗ ' . esc_html__('Ignorés', 'wcs-tax-retrofit') . '</strong>', '<strong>✗ ' . esc_html__('Erreurs', 'wcs-tax-retrofit') . '</strong>')) . "</li>";
         echo "<li>" . esc_html__('Si vous acceptez ces écarts minimes (1 centime), augmentez la tolérance à 0.02€ dans les paramètres', 'wcs-tax-retrofit') . "</li>";
         echo "</ul>";
         echo "</div>";
@@ -1149,6 +2038,82 @@ function wc_tax_retrofit_display_results($stats, $dry_run = false): void {
     echo "</div>";
 }
 
+/**
+ * Affiche la progression de la migration en arrière-plan (la page se recharge toute seule)
+ */
+function wc_tax_retrofit_bg_render_progress(array $state): void {
+    $total = max(0, (int) ($state['total'] ?? 0));
+    $processed = min($total, (int) ($state['offset'] ?? 0));
+    $percent = $total > 0 ? (int) round($processed / $total * 100) : 0;
+    $page_url = admin_url('admin.php?page=wcs-tax-retrofit');
+
+    echo "<div style='background:#fff;padding:20px;margin:20px 0;border-left:4px solid #46b450'>";
+    echo '<h2>⏳ ' . esc_html__('Migration en cours en arrière-plan', 'wcs-tax-retrofit') . '</h2>';
+    echo '<p>' . esc_html__('La migration continue même si vous fermez cette page (tâches Action Scheduler de WooCommerce).', 'wcs-tax-retrofit') . '</p>';
+    echo "<div style='background:#f0f0f0;border-radius:10px;height:30px;position:relative;overflow:hidden;margin:15px 0'>";
+    echo "<div style='background:#46b450;height:100%;width:" . intval($percent) . "%'></div>";
+    echo "<div style='position:absolute;top:0;left:0;right:0;text-align:center;line-height:30px;font-weight:bold;color:#333'>";
+    echo intval($processed) . ' / ' . intval($total) . ' ' . esc_html__('abonnements traités', 'wcs-tax-retrofit') . ' (' . intval($percent) . '%)';
+    echo '</div></div>';
+    echo '<p><strong>✓ ' . esc_html__('Mis à jour :', 'wcs-tax-retrofit') . '</strong> ' . intval($state['updated'] ?? 0)
+        . ' &nbsp; <strong>↻ ' . esc_html__('Renouvellements impayés', 'wcs-tax-retrofit') . ' :</strong> ' . intval($state['renewals'] ?? 0)
+        . ' &nbsp; <strong>⊗ ' . esc_html__('Ignorés :', 'wcs-tax-retrofit') . '</strong> ' . intval($state['skipped'] ?? 0)
+        . ' &nbsp; <strong>✗ ' . esc_html__('Erreurs :', 'wcs-tax-retrofit') . '</strong> ' . intval($state['errors'] ?? 0) . '</p>';
+    echo '<p class="description">' . esc_html(sprintf(
+        /* translators: %s: human readable time difference */
+        __('Dernière mise à jour : il y a %s', 'wcs-tax-retrofit'),
+        human_time_diff((int) ($state['updated_at'] ?? time()), time())
+    )) . '</p>';
+
+    echo "<form method='post' onsubmit=\"return confirm('" . esc_js(__('Arrêter la migration après le lot en cours ? Les abonnements déjà migrés le restent ; vous pourrez reprendre plus tard.', 'wcs-tax-retrofit')) . "')\">";
+    wp_nonce_field('wc_tax_retrofit_bg_cancel_nonce');
+    echo "<button type='submit' name='bg_cancel' value='1' class='button'>⏹ " . esc_html__('Arrêter la migration', 'wcs-tax-retrofit') . '</button>';
+    echo '</form>';
+    echo '<script>setTimeout(function(){ window.location.href = ' . wp_json_encode($page_url) . '; }, 5000);</script>';
+    echo '</div>';
+}
+
+/**
+ * Affiche le bilan d'une migration en arrière-plan terminée, échouée ou arrêtée
+ */
+function wc_tax_retrofit_bg_render_summary(array $state): void {
+    $status = $state['status'] ?? '';
+    $styles = array('completed' => '#46b450', 'failed' => '#d63638', 'cancelled' => '#ffc107');
+    $titles = array(
+        'completed' => '✅ ' . __('Migration en arrière-plan terminée', 'wcs-tax-retrofit'),
+        'failed' => '❌ ' . __('Migration en arrière-plan interrompue par une erreur', 'wcs-tax-retrofit'),
+        'cancelled' => '⏹ ' . __('Migration en arrière-plan arrêtée', 'wcs-tax-retrofit'),
+    );
+    if (!isset($titles[$status])) {
+        return;
+    }
+
+    echo "<div style='background:#fff;padding:20px;margin:20px 0;border-left:4px solid " . esc_attr($styles[$status]) . "'>";
+    echo '<h2 style="margin-top:0">' . esc_html($titles[$status]) . '</h2>';
+    echo '<p><strong>✓ ' . esc_html__('Mis à jour :', 'wcs-tax-retrofit') . '</strong> ' . intval($state['updated'] ?? 0)
+        . ' &nbsp; <strong>↻ ' . esc_html__('Renouvellements impayés', 'wcs-tax-retrofit') . ' :</strong> ' . intval($state['renewals'] ?? 0)
+        . ' &nbsp; <strong>⊗ ' . esc_html__('Ignorés :', 'wcs-tax-retrofit') . '</strong> ' . intval($state['skipped'] ?? 0)
+        . ' &nbsp; <strong>✗ ' . esc_html__('Erreurs :', 'wcs-tax-retrofit') . '</strong> ' . intval($state['errors'] ?? 0) . '</p>';
+    if (!empty($state['message'])) {
+        echo '<p style="color:#d63638"><strong>' . esc_html($state['message']) . '</strong></p>';
+    }
+    foreach (array('tolerance_warnings' => __('Alertes de tolérance', 'wcs-tax-retrofit'), 'errors_list' => __('Erreurs', 'wcs-tax-retrofit')) as $key => $label) {
+        if (!empty($state[$key])) {
+            echo '<details><summary><strong>' . esc_html($label) . ' (' . count($state[$key]) . ')</strong></summary>';
+            echo "<div style='max-height:250px;overflow-y:auto;background:#f5f5f5;padding:10px;font-family:monospace;font-size:11px'>";
+            foreach ($state[$key] as $line) {
+                echo esc_html($line) . '<br>';
+            }
+            echo '</div></details>';
+        }
+    }
+    echo '<p class="description">' . esc_html__('Détail complet : logs WooCommerce (source : wcs-tax-retrofit).', 'wcs-tax-retrofit') . '</p>';
+    echo "<form method='post'>";
+    wp_nonce_field('wc_tax_retrofit_bg_dismiss_nonce');
+    echo "<button type='submit' name='bg_dismiss' value='1' class='button'>" . esc_html__('Masquer ce bilan', 'wcs-tax-retrofit') . '</button>';
+    echo '</form></div>';
+}
+
 function wc_tax_retrofit_admin_menu(): void {
     // Vérifier les dépendances AVANT de créer le menu
     if (!wc_tax_retrofit_check_dependencies()) {
@@ -1186,7 +2151,9 @@ function wc_tax_retrofit_admin_page(): void {
         // Nettoyer le CSV de l'utilisateur
         $user_id = get_current_user_id();
         delete_transient('wc_tax_retrofit_csv_' . $user_id);
-        delete_transient('wc_tax_retrofit_running');
+        wc_tax_retrofit_bg_cancel();
+        delete_option(WC_TAX_RETROFIT_BG_STATE);
+        wc_tax_retrofit_force_release_lock();
         
         wc_tax_retrofit_log('Migration complètement réinitialisée par ' . wp_get_current_user()->user_login);
         
@@ -1309,6 +2276,33 @@ function wc_tax_retrofit_admin_page(): void {
     echo "<div class='wrap'><h1>🔧 WooCommerce Subscription Tax Retrofit</h1>";
     echo "<p style='color:#d63638;font-weight:bold'>⚠️ " . esc_html__('Faire une sauvegarde complète avant utilisation', 'wcs-tax-retrofit') . "</p>";
     
+    // Arrière-plan : arrêt / masquage du bilan
+    if (isset($_POST['bg_cancel']) && check_admin_referer('wc_tax_retrofit_bg_cancel_nonce')) {
+        wc_tax_retrofit_require_capability();
+        wc_tax_retrofit_bg_cancel();
+    }
+    if (isset($_POST['bg_dismiss']) && check_admin_referer('wc_tax_retrofit_bg_dismiss_nonce')) {
+        wc_tax_retrofit_require_capability();
+        delete_option(WC_TAX_RETROFIT_BG_STATE);
+    }
+
+    $bg_state = wc_tax_retrofit_bg_get_state();
+    if (($bg_state['status'] ?? '') === 'running') {
+        wc_tax_retrofit_bg_render_progress($bg_state);
+        echo '</div>';
+        return;
+    }
+    if (!empty($bg_state['status'])) {
+        wc_tax_retrofit_bg_render_summary($bg_state);
+        $already_executed = get_option('wc_tax_retrofit_executed', false);
+    }
+
+    // Tables non transactionnelles : la migration réelle sera refusée
+    $non_transactional = wc_tax_retrofit_get_non_transactional_tables();
+    if (!empty($non_transactional)) {
+        echo "<div class='notice notice-error' style='padding:15px;margin:20px 0'><p><strong>❌ " . esc_html(wc_tax_retrofit_non_transactional_message($non_transactional)) . '</strong></p></div>';
+    }
+
     // Vérifier le Tax Rate ID et afficher un avertissement clair si introuvable
     $tax_rate_id_check = wc_tax_retrofit_get_tax_rate_id();
 
@@ -1362,7 +2356,7 @@ function wc_tax_retrofit_admin_page(): void {
         
         echo "<h3>📋 " . esc_html__('Comment configurer un taux de TVA :', 'wcs-tax-retrofit') . "</h3>";
         echo "<ol style='margin-left:20px'>";
-        echo "<li>" . sprintf(__('Allez dans %s', 'wcs-tax-retrofit'), '<strong><a href="' . admin_url('admin.php?page=wc-settings&tab=tax') . '">WooCommerce → ' . esc_html__('Réglages', 'wcs-tax-retrofit') . ' → ' . esc_html__('Taxes', 'wcs-tax-retrofit') . '</a></strong>') . "</li>";
+        echo "<li>" . sprintf(__('Allez dans %s', 'wcs-tax-retrofit'), '<strong><a href="' . esc_url(admin_url('admin.php?page=wc-settings&tab=tax')) . '">WooCommerce → ' . esc_html__('Réglages', 'wcs-tax-retrofit') . ' → ' . esc_html__('Taxes', 'wcs-tax-retrofit') . '</a></strong>') . "</li>";
         echo "<li>" . esc_html__('Activez les taxes si ce n\'est pas déjà fait', 'wcs-tax-retrofit') . "</li>";
         echo "<li>" . esc_html__('Cliquez sur \'Taux standard\' (ou créez une classe de taxe)', 'wcs-tax-retrofit') . "</li>";
         echo "<li>" . esc_html__('Ajoutez un taux avec :', 'wcs-tax-retrofit') . "</li>";
@@ -1377,7 +2371,7 @@ function wc_tax_retrofit_admin_page(): void {
         echo "<p><strong>💡 " . esc_html(sprintf(__('Taux recherché actuellement : %s%% pour la France', 'wcs-tax-retrofit'), $target)) . "</strong></p>";
         echo "<p class='description'>" . esc_html__('Si votre taux est différent, vous pouvez le modifier avec le filtre', 'wcs-tax-retrofit') . " <code>wc_tax_retrofit_rate</code> (" . esc_html__('ex: 0.055 pour 5.5%', 'wcs-tax-retrofit') . ")</p>";
         echo "<hr>";
-        echo "<p><strong>🔍 " . sprintf(__('Consultez les %s', 'wcs-tax-retrofit'), '<a href="' . admin_url('admin.php?page=wc-status&tab=logs') . '" target="_blank">' . esc_html__('logs WooCommerce', 'wcs-tax-retrofit') . '</a>') . "</strong> (source: wcs-tax-retrofit) " . esc_html__('pour voir :', 'wcs-tax-retrofit') . "</p>";
+        echo "<p><strong>🔍 " . sprintf(__('Consultez les %s', 'wcs-tax-retrofit'), '<a href="' . esc_url(admin_url('admin.php?page=wc-status&tab=logs')) . '" target="_blank">' . esc_html__('logs WooCommerce', 'wcs-tax-retrofit') . '</a>') . "</strong> (source: wcs-tax-retrofit) " . esc_html__('pour voir :', 'wcs-tax-retrofit') . "</p>";
         echo "<ul style='margin-left:20px'>";
         echo "<li>" . esc_html__('Les taux de TVA disponibles dans votre base', 'wcs-tax-retrofit') . "</li>";
         echo "<li>" . esc_html__('Les détails de la recherche effectuée', 'wcs-tax-retrofit') . "</li>";
@@ -1490,9 +2484,36 @@ function wc_tax_retrofit_admin_page(): void {
             delete_transient($csv_key);
             wc_tax_retrofit_log('Nettoyage CSV : Nouvelle exécution détectée');
         }
+
+        // Migration en arrière-plan (Action Scheduler) : fermer la page ne l'interrompt plus.
+        // Lancement au premier lot ou à la reprise d'une migration interrompue (offset sauvegardé).
+        if (wc_tax_retrofit_background_available()
+            && ($offset === 0 || $offset === (int) get_option('wc_tax_retrofit_current_offset', 0))) {
+            if (!empty($non_transactional)) {
+                echo '</div>';
+                return;
+            }
+            if (!wc_tax_retrofit_bg_start(get_current_user_id())) {
+                echo "<div style='background:#fff3cd;padding:20px;margin:20px;border-left:4px solid #ffc107'><p>" . esc_html__('Une mise à jour est déjà en cours.', 'wcs-tax-retrofit') . '</p></div>';
+                echo '</div>';
+                return;
+            }
+            wc_tax_retrofit_bg_render_progress(wc_tax_retrofit_bg_get_state());
+            echo '</div>';
+            return;
+        }
         
         $stats = wc_tax_retrofit_process(false, $offset);
         wc_tax_retrofit_display_results($stats, false);
+
+        // Verrou ou erreur bloquante : rien n'a été traité, ne PAS marquer la migration comme exécutée
+        if (!empty($stats['locked']) || !empty($stats['fatal'])) {
+            if (!empty($stats['fatal'])) {
+                echo "<div class='notice notice-error' style='padding:15px'><p>" . esc_html(implode(' ', $stats['errors_list'])) . '</p></div>';
+            }
+            echo '</div>';
+            return;
+        }
         
         if (!isset($stats['has_more']) || !$stats['has_more']) {
             update_option('wc_tax_retrofit_executed', true);
@@ -1529,7 +2550,7 @@ function wc_tax_retrofit_admin_page(): void {
                                 echo '<div style="background:#ffebe8;padding:15px;border-left:4px solid #d63638">';
                                 echo '<p><strong>❌ ' . esc_html__('Aucun taux de TVA configuré', 'wcs-tax-retrofit') . '</strong></p>';
                                 echo '<p>' . esc_html__('Vous devez d\'abord configurer des taux de TVA dans WooCommerce :', 'wcs-tax-retrofit') . '</p>';
-                                echo '<p><a href="' . admin_url('admin.php?page=wc-settings&tab=tax') . '" class="button button-secondary">⚙️ ' . esc_html__('Configurer les taux de TVA', 'wcs-tax-retrofit') . '</a></p>';
+                                echo '<p><a href="' . esc_url(admin_url('admin.php?page=wc-settings&tab=tax')) . '" class="button button-secondary">⚙️ ' . esc_html__('Configurer les taux de TVA', 'wcs-tax-retrofit') . '</a></p>';
                                 echo '</div>';
                             } else {
                                 echo '<select name="tax_rate_id" id="tax_rate_id" class="regular-text">';
@@ -1684,7 +2705,7 @@ function wc_tax_retrofit_admin_page(): void {
                     <?php echo esc_html__('Calcul en cours...', 'wcs-tax-retrofit'); ?>
                 </strong>
             </p>
-            <p class="description"><?php echo esc_html__('Statuts :', 'wcs-tax-retrofit'); ?> <code><?php echo implode('</code>, <code>', wc_tax_retrofit_get_subscription_statuses()); ?></code> <?php echo esc_html(sprintf(__('créés jusqu\'au %s', 'wcs-tax-retrofit'), wc_tax_retrofit_get_date_limit())); ?></p>
+            <p class="description"><?php echo esc_html__('Statuts :', 'wcs-tax-retrofit'); ?> <code><?php echo implode('</code>, <code>', array_map('esc_html', wc_tax_retrofit_get_subscription_statuses())); ?></code> <?php echo esc_html(sprintf(__('créés jusqu\'au %s', 'wcs-tax-retrofit'), wc_tax_retrofit_get_date_limit())); ?></p>
             <p class="description"><small>(<?php echo esc_html__('modifiable via filtre', 'wcs-tax-retrofit'); ?> <code>wc_tax_retrofit_subscription_statuses</code>)</small></p>
         </div>
         
@@ -1752,7 +2773,7 @@ function wc_tax_retrofit_admin_page(): void {
         <h3>✓ <?php echo esc_html__('Actions', 'wcs-tax-retrofit'); ?></h3>
         <ul>
             <li>✓ <?php echo esc_html(sprintf(__('Identifie abonnements %1$s créés jusqu\'au %2$s', 'wcs-tax-retrofit'), implode(', ', wc_tax_retrofit_get_subscription_statuses()), wc_tax_retrofit_get_date_limit())); ?></li>
-            <li>✓ <?php echo esc_html__('Supprime/recrée chaque ligne avec HT et TVA', 'wcs-tax-retrofit'); ?></li>
+            <li>✓ <?php echo esc_html__('Convertit chaque ligne en HT + TVA (sans la supprimer : ID, classe de taxe et métadonnées conservés)', 'wcs-tax-retrofit'); ?></li>
             <li>✓ <?php echo esc_html__('Préserve métadonnées', 'wcs-tax-retrofit'); ?></li>
             <li>✓ <?php echo esc_html__('Utilise tax_rate_id (Stripe compatible)', 'wcs-tax-retrofit'); ?></li>
             <li>✓ <?php echo esc_html(sprintf(__('Vérifie total TTC identique (tolérance : %s€)', 'wcs-tax-retrofit'), wc_tax_retrofit_get_tolerance())); ?></li>
@@ -1813,7 +2834,7 @@ function wc_tax_retrofit_admin_page(): void {
                 ?>)</small></li>
                 <li><?php echo esc_html__('Statuts :', 'wcs-tax-retrofit'); ?> <?php
                     $statuses = wc_tax_retrofit_get_subscription_statuses();
-                    echo implode(', ', $statuses);
+                    echo esc_html(implode(', ', $statuses));
                 ?> <small>(<?php
                     $saved_statuses = get_option('wc_tax_retrofit_statuses', null);
                     echo esc_html($saved_statuses !== null ? __('configurés via interface', 'wcs-tax-retrofit') : __('valeurs par défaut ou filtre', 'wcs-tax-retrofit'));
@@ -1824,9 +2845,9 @@ function wc_tax_retrofit_admin_page(): void {
                         echo esc_html($tid) . ' ✅';
                     } else {
                         echo '<span style="color:#d63638;font-weight:bold">' . esc_html__('Non trouvé', 'wcs-tax-retrofit') . ' ⚠️</span>';
-                        echo '<br><small style="color:#d63638">→ ' . esc_html__('Configurez un taux de TVA dans', 'wcs-tax-retrofit') . ' <a href="' . admin_url('admin.php?page=wc-settings&tab=tax') . '" target="_blank" style="color:#d63638;text-decoration:underline">WooCommerce → ' . esc_html__('Réglages', 'wcs-tax-retrofit') . ' → ' . esc_html__('Taxes', 'wcs-tax-retrofit') . '</a></small>';
+                        echo '<br><small style="color:#d63638">→ ' . esc_html__('Configurez un taux de TVA dans', 'wcs-tax-retrofit') . ' <a href="' . esc_url(admin_url('admin.php?page=wc-settings&tab=tax')) . '" target="_blank" style="color:#d63638;text-decoration:underline">WooCommerce → ' . esc_html__('Réglages', 'wcs-tax-retrofit') . ' → ' . esc_html__('Taxes', 'wcs-tax-retrofit') . '</a></small>';
                         echo '<br><small style="color:#666">→ ' . esc_html(sprintf(__('Taux recherché : %s%%', 'wcs-tax-retrofit'), $target)) . ' (' . esc_html__('modifiable via filtre', 'wcs-tax-retrofit') . ' <code>wc_tax_retrofit_rate</code>)</small>';
-                        echo '<br><small style="color:#666">→ ' . sprintf(__('Consultez les %s pour voir les taux disponibles', 'wcs-tax-retrofit'), '<a href="' . admin_url('admin.php?page=wc-status&tab=logs') . '" target="_blank">logs</a>') . '</small>';
+                        echo '<br><small style="color:#666">→ ' . sprintf(__('Consultez les %s pour voir les taux disponibles', 'wcs-tax-retrofit'), '<a href="' . esc_url(admin_url('admin.php?page=wc-status&tab=logs')) . '" target="_blank">logs</a>') . '</small>';
                     }
                 ?></li>
                 <li>📋 <a href="<?php echo esc_url(admin_url('admin.php?page=wc-status&tab=logs')); ?>" target="_blank"><?php echo esc_html__('Logs WooCommerce', 'wcs-tax-retrofit'); ?></a> (source: wcs-tax-retrofit)</li>
@@ -1874,19 +2895,21 @@ register_activation_hook(__FILE__, 'wc_tax_retrofit_activate');
 
 function wc_tax_retrofit_deactivate(): void {
     wc_tax_retrofit_log('Plugin désactivé - Nettoyage');
-    delete_transient('wc_tax_retrofit_running');
+    // Arrière-plan : ne pas laisser de tâche Action Scheduler orpheline
+    if (function_exists('as_unschedule_all_actions')) {
+        as_unschedule_all_actions(WC_TAX_RETROFIT_BG_HOOK); // hook seul : avec arguments vides, AS ne supprimerait que les tâches sans arguments
+    }
+    delete_option(WC_TAX_RETROFIT_BG_STATE);
+    wc_tax_retrofit_force_release_lock();
     delete_transient('wc_tax_retrofit_detect_date_desc');
     delete_transient('wc_tax_retrofit_detect_date_asc');
     delete_option('wc_tax_retrofit_partial_count');
     delete_option('wc_tax_retrofit_current_offset');
     delete_option('wc_tax_retrofit_last_activity');
     delete_transient('wc_tax_retrofit_activation_notice');
-    
-    global $wpdb;
-    $like_csv = $wpdb->esc_like('_transient_wc_tax_retrofit_csv_') . '%';
-    $like_timeout = $wpdb->esc_like('_transient_timeout_wc_tax_retrofit_csv_') . '%';
-    $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", $like_csv));
-    $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", $like_timeout));
+
+    // CSV par utilisateur : via l'API d'abord (cache objet persistant), puis en base
+    wc_tax_retrofit_delete_all_csv_transients();
 
     wc_tax_retrofit_log('Nettoyage terminé');
 }
@@ -1927,7 +2950,54 @@ register_deactivation_hook(__FILE__, 'wc_tax_retrofit_deactivate');
 
 if (defined('WP_CLI') && WP_CLI) {
     
+    /**
+     * Migre les abonnements WooCommerce Subscriptions de TTC sans TVA vers HT + TVA.
+     *
+     * ## EXAMPLES
+     *
+     *     # Afficher ou modifier la configuration
+     *     wp tax-retrofit config
+     *     wp tax-retrofit config --tax-rate=20 --date-limit=2024-01-01
+     *
+     *     # Simuler (aucune écriture sur les abonnements)
+     *     wp tax-retrofit simulate
+     *     wp tax-retrofit simulate --tax-rate=5.5 --format=json
+     *
+     *     # Migrer pour de vrai
+     *     wp tax-retrofit migrate --yes-i-have-a-backup
+     *
+     *     # Annuler la migration (valeurs d'origine enregistrées)
+     *     wp tax-retrofit revert --dry-run
+     *     wp tax-retrofit revert --yes-i-have-a-backup
+     *
+     *     # État et réinitialisation
+     *     wp tax-retrofit stats
+     *     wp tax-retrofit reset
+     */
     class WC_Tax_Retrofit_CLI_Command {
+
+        /**
+         * Supprime le CSV de l'utilisateur courant (WP-CLI = utilisateur 0, sauf --user)
+         * Évite que les exécutions successives s'accumulent dans le même export.
+         */
+        private function clear_csv(): void {
+            delete_transient('wc_tax_retrofit_csv_' . get_current_user_id());
+        }
+
+        /**
+         * Restaure les options modifiées temporairement par simulate
+         *
+         * @param array $restore [option => valeur d'origine|null]
+         */
+        private function restore_options(array $restore): void {
+            foreach ($restore as $key => $value) {
+                if ($value === null) {
+                    delete_option($key);
+                } else {
+                    update_option($key, $value);
+                }
+            }
+        }
         
         /**
          * Affiche ou modifie la configuration du plugin
@@ -1964,21 +3034,17 @@ if (defined('WP_CLI') && WP_CLI) {
             
             if (isset($assoc_args['tax-rate'])) {
                 $rate = floatval($assoc_args['tax-rate']) / 100;
-                if ($rate > 0 && $rate <= 1) {
-                    // Trouver le tax_rate_id correspondant (match approximatif comme wc_tax_retrofit_get_tax_rate_id)
-                    global $wpdb;
-                    $tax_rate_id = $wpdb->get_var($wpdb->prepare(
-                        "SELECT tax_rate_id FROM {$wpdb->prefix}woocommerce_tax_rates
-                         WHERE ABS(tax_rate - %f) < 0.01 LIMIT 1",
-                        $rate * 100
-                    ));
+                if ($rate >= 0.001 && $rate <= 1) {
+                    // Trouver le tax_rate_id correspondant (même priorité que wc_tax_retrofit_get_tax_rate_id)
+                    $tax_rate_id = wc_tax_retrofit_find_rate_id_by_percent($rate * 100);
                     
                     if ($tax_rate_id) {
                         update_option('wc_tax_retrofit_selected_tax_rate_id', $tax_rate_id);
                         WP_CLI::success(sprintf(__('Taux de TVA configuré : %s%%', 'wcs-tax-retrofit'), $assoc_args['tax-rate']));
                         $updated = true;
                     } else {
-                        WP_CLI::warning(sprintf(__('Taux %s%% non trouvé dans WooCommerce', 'wcs-tax-retrofit'), $assoc_args['tax-rate']));
+                        // Erreur (code retour 1) et non simple avertissement : un script doit pouvoir détecter l'échec
+                        WP_CLI::error(sprintf(__('Taux %s%% non trouvé dans WooCommerce', 'wcs-tax-retrofit'), $assoc_args['tax-rate']));
                     }
                 } else {
                     WP_CLI::error(__('Taux invalide (doit être entre 0.1 et 100)', 'wcs-tax-retrofit'));
@@ -2052,8 +3118,15 @@ if (defined('WP_CLI') && WP_CLI) {
          * [--tolerance=<amount>]
          * : Tolérance temporaire pour cette simulation
          * 
-         * [--json]
-         * : Sortie au format JSON
+         * [--format=<format>]
+         * : Format de sortie. `--json` est accepté comme raccourci de `--format=json`
+         * (WP-CLI convertit automatiquement --json en --format=json).
+         * ---
+         * default: table
+         * options:
+         *   - table
+         *   - json
+         * ---
          * 
          * ## EXAMPLES
          * 
@@ -2067,46 +3140,65 @@ if (defined('WP_CLI') && WP_CLI) {
                 WP_CLI::error(__('Dépendances manquantes', 'wcs-tax-retrofit'));
             }
 
-            // Sauvegarder et restaurer les options temporaires
-            $restore = array();
+            // 1) Valider TOUS les paramètres avant de modifier quoi que ce soit :
+            //    une valeur invalide ne doit jamais être ignorée silencieusement
+            $overrides = array();
 
-            // --tax-rate : override via option DB (le filtre est ignoré si une option DB existe)
             if (isset($assoc_args['tax-rate'])) {
                 $rate = floatval($assoc_args['tax-rate']) / 100;
-                if ($rate > 0 && $rate <= 1) {
-                    global $wpdb;
-                    $tax_rate_id = $wpdb->get_var($wpdb->prepare(
-                        "SELECT tax_rate_id FROM {$wpdb->prefix}woocommerce_tax_rates
-                         WHERE ABS(tax_rate - %f) < 0.01 LIMIT 1",
-                        $rate * 100
-                    ));
-                    if ($tax_rate_id) {
-                        $restore['wc_tax_retrofit_selected_tax_rate_id'] = get_option('wc_tax_retrofit_selected_tax_rate_id', null);
-                        update_option('wc_tax_retrofit_selected_tax_rate_id', $tax_rate_id);
-                    } else {
-                        WP_CLI::warning(sprintf(__('Taux %s%% non trouvé dans WooCommerce, utilisation du taux configuré', 'wcs-tax-retrofit'), $assoc_args['tax-rate']));
-                    }
+                if ($rate < 0.001 || $rate > 1) {
+                    WP_CLI::error(__('Taux invalide (doit être entre 0.1 et 100)', 'wcs-tax-retrofit'));
                 }
+                $tax_rate_id = wc_tax_retrofit_find_rate_id_by_percent($rate * 100);
+                if (!$tax_rate_id) {
+                    WP_CLI::error(sprintf(__('Taux %s%% non trouvé dans WooCommerce', 'wcs-tax-retrofit'), $assoc_args['tax-rate']));
+                }
+                $overrides['wc_tax_retrofit_selected_tax_rate_id'] = $tax_rate_id;
             }
 
             if (isset($assoc_args['date-limit'])) {
                 $date = wc_tax_retrofit_validate_date($assoc_args['date-limit']);
-                if ($date) {
-                    $restore['wc_tax_retrofit_date_limit'] = get_option('wc_tax_retrofit_date_limit', null);
-                    update_option('wc_tax_retrofit_date_limit', $date);
+                if (!$date) {
+                    WP_CLI::error(__('Date invalide (format requis : YYYY-MM-DD)', 'wcs-tax-retrofit'));
                 }
+                $overrides['wc_tax_retrofit_date_limit'] = $date;
             }
 
             if (isset($assoc_args['tolerance'])) {
                 $tolerance = wc_tax_retrofit_validate_float($assoc_args['tolerance'], 0.001, 1.0);
-                if ($tolerance !== false) {
-                    $restore['wc_tax_retrofit_tolerance_setting'] = get_option('wc_tax_retrofit_tolerance_setting', null);
-                    update_option('wc_tax_retrofit_tolerance_setting', $tolerance);
+                if ($tolerance === false) {
+                    WP_CLI::error(__('Tolérance invalide (doit être entre 0.001 et 1.0)', 'wcs-tax-retrofit'));
                 }
+                $overrides['wc_tax_retrofit_tolerance_setting'] = $tolerance;
             }
 
-            WP_CLI::line(__('Lancement de la simulation...', 'wcs-tax-retrofit'));
-            WP_CLI::line('');
+            // 2) Verrou vérifié AVANT d'appliquer les valeurs temporaires
+            if (wc_tax_retrofit_is_locked() || wc_tax_retrofit_bg_is_running()) {
+                WP_CLI::error(__('Une mise à jour est déjà en cours.', 'wcs-tax-retrofit'));
+            }
+
+            // 3) Appliquer les valeurs temporaires (restaurées en fin de commande)
+            $restore = array();
+            foreach ($overrides as $key => $value) {
+                $restore[$key] = get_option($key, null);
+                update_option($key, $value);
+            }
+
+            $this->clear_csv();
+
+            $total_renewals = 0;
+
+            // En JSON, seule la sortie JSON doit être imprimée (exploitable par un script)
+            $quiet = (($assoc_args['format'] ?? 'table') === 'json') || isset($assoc_args['json']);
+
+            if (!$quiet) {
+                $non_transactional = wc_tax_retrofit_get_non_transactional_tables();
+                if (!empty($non_transactional)) {
+                    WP_CLI::warning(wc_tax_retrofit_non_transactional_message($non_transactional));
+                }
+                WP_CLI::line(__('Lancement de la simulation...', 'wcs-tax-retrofit'));
+                WP_CLI::line('');
+            }
 
             // Lancer la simulation par lots (comme migrate)
             $total_updated = 0;
@@ -2121,8 +3213,12 @@ if (defined('WP_CLI') && WP_CLI) {
 
             do {
                 $stats = wc_tax_retrofit_process(true, $offset);
+                $total_renewals += (int) ($stats['renewals_updated'] ?? 0);
 
                 if (isset($stats['locked']) && $stats['locked']) {
+                    // WP_CLI::error() appelle exit : restaurer AVANT, sinon les valeurs
+                    // temporaires (--tax-rate, --date-limit...) resteraient enregistrées
+                    $this->restore_options($restore);
                     WP_CLI::error($stats['message']);
                 }
 
@@ -2143,27 +3239,21 @@ if (defined('WP_CLI') && WP_CLI) {
                 }
                 $all_stats = $stats;
 
-                if ($stats['batch_size'] > 0) {
+                if ($stats['batch_size'] > 0 && !$quiet) {
                     WP_CLI::line(sprintf(
                         __('Batch offset %d : %d à migrer, %d ignorés, %d erreurs', 'wcs-tax-retrofit'),
-                        $offset, $stats['updated'], $stats['skipped'], $stats['errors']
+                        $stats['offset'], $stats['updated'], $stats['skipped'], $stats['errors']
                     ));
                 }
 
-                $offset += WC_TAX_RETROFIT_BATCH_SIZE;
+                $offset = (int) $stats['offset'] + WC_TAX_RETROFIT_BATCH_SIZE;
             } while (!empty($stats['has_more']));
 
             // Restaurer les options temporaires
-            foreach ($restore as $key => $value) {
-                if ($value === null) {
-                    delete_option($key);
-                } else {
-                    update_option($key, $value);
-                }
-            }
+            $this->restore_options($restore);
 
             // Afficher les résultats
-            if (isset($assoc_args['json'])) {
+            if ($quiet) {
                 $all_stats['updated'] = $total_updated;
                 $all_stats['skipped'] = $total_skipped;
                 $all_stats['errors'] = $total_errors;
@@ -2171,12 +3261,14 @@ if (defined('WP_CLI') && WP_CLI) {
                 $all_stats['details'] = $total_details;
                 $all_stats['csv_data'] = $total_csv_data;
                 $all_stats['errors_list'] = $total_errors_list;
+                $all_stats['renewals_updated'] = $total_renewals;
                 WP_CLI::line(json_encode($all_stats, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
             } else {
                 WP_CLI::line('');
                 WP_CLI::success(__('Simulation terminée', 'wcs-tax-retrofit'));
                 WP_CLI::line('');
                 WP_CLI::line(sprintf('  ✓ ' . __('À migrer', 'wcs-tax-retrofit') . '    : %d', $total_updated));
+                WP_CLI::line(sprintf('  ↻ ' . __('Renouvellements impayés', 'wcs-tax-retrofit') . ' : %d', $total_renewals));
                 WP_CLI::line(sprintf('  ⊗ ' . __('Ignorés', 'wcs-tax-retrofit') . '     : %d', $total_skipped));
                 WP_CLI::line(sprintf('  ✗ ' . __('Erreurs', 'wcs-tax-retrofit') . '     : %d', $total_errors));
 
@@ -2194,7 +3286,7 @@ if (defined('WP_CLI') && WP_CLI) {
          * 
          * ## OPTIONS
          * 
-         * --yes-i-have-a-backup
+         * [--yes-i-have-a-backup]
          * : Confirmation que vous avez fait une sauvegarde (OBLIGATOIRE)
          *
          * [--offset=<offset>]
@@ -2219,7 +3311,16 @@ if (defined('WP_CLI') && WP_CLI) {
                 WP_CLI::error(__('ARRÊT : Vous devez confirmer avoir fait une sauvegarde avec --yes-i-have-a-backup', 'wcs-tax-retrofit'));
             }
             
-            $offset = intval($assoc_args['offset'] ?? 0);
+            $offset = max(0, intval($assoc_args['offset'] ?? 0));
+
+            if (wc_tax_retrofit_is_locked() || wc_tax_retrofit_bg_is_running()) {
+                WP_CLI::error(__('Une mise à jour est déjà en cours.', 'wcs-tax-retrofit'));
+            }
+
+            $non_transactional = wc_tax_retrofit_get_non_transactional_tables();
+            if (!empty($non_transactional)) {
+                WP_CLI::error(wc_tax_retrofit_non_transactional_message($non_transactional));
+            }
             
             WP_CLI::warning('⚠️  ' . __('MIGRATION RÉELLE - LES DONNÉES VONT ÊTRE MODIFIÉES', 'wcs-tax-retrofit'));
             WP_CLI::line('');
@@ -2236,11 +3337,17 @@ if (defined('WP_CLI') && WP_CLI) {
             
             WP_CLI::line(__('Lancement de la migration...', 'wcs-tax-retrofit'));
             WP_CLI::line('');
+
+            // Nouvelle migration (pas de reprise) : repartir d'un CSV vide, comme l'interface web
+            if ($offset === 0 && !get_option('wc_tax_retrofit_current_offset')) {
+                $this->clear_csv();
+            }
             
             // Lancer la migration par lots avec continuation automatique
             $total_updated = 0;
             $total_skipped = 0;
             $total_errors = 0;
+            $total_renewals = 0;
 
             do {
                 $stats = wc_tax_retrofit_process(false, $offset);
@@ -2248,27 +3355,40 @@ if (defined('WP_CLI') && WP_CLI) {
                 if (isset($stats['locked']) && $stats['locked']) {
                     WP_CLI::error($stats['message']);
                 }
+                if (!empty($stats['fatal'])) {
+                    WP_CLI::error(implode(' ', $stats['errors_list']));
+                }
 
+                $total_renewals += (int) ($stats['renewals_updated'] ?? 0);
                 $total_updated += $stats['updated'];
                 $total_skipped += $stats['skipped'];
                 $total_errors += $stats['errors'];
 
+                // $stats['offset'] = offset réellement traité (process() reprend automatiquement
+                // à l'offset sauvegardé d'une migration interrompue, web ou CLI)
                 WP_CLI::line(sprintf(
                     __('Batch offset %d : %d mis à jour, %d ignorés, %d erreurs', 'wcs-tax-retrofit'),
-                    $offset, $stats['updated'], $stats['skipped'], $stats['errors']
+                    $stats['offset'], $stats['updated'], $stats['skipped'], $stats['errors']
                 ));
 
                 if (!empty($stats['tolerance_warnings'])) {
                     WP_CLI::warning(sprintf(__('%d alertes de tolérance', 'wcs-tax-retrofit'), count($stats['tolerance_warnings'])));
                 }
 
-                $offset += WC_TAX_RETROFIT_BATCH_SIZE;
+                // Compteur cumulé comme l'interface web : survit à une interruption
+                // et inclut les lots déjà traités par une migration web reprise ici
+                if (!empty($stats['has_more'])) {
+                    update_option('wc_tax_retrofit_partial_count', (int) get_option('wc_tax_retrofit_partial_count', 0) + $stats['updated']);
+                }
+
+                $offset = (int) $stats['offset'] + WC_TAX_RETROFIT_BATCH_SIZE;
             } while (!empty($stats['has_more']));
 
             // Sauvegarder l'état d'exécution (comme la version web)
+            $previous_batches = (int) get_option('wc_tax_retrofit_partial_count', 0);
             update_option('wc_tax_retrofit_executed', true);
             update_option('wc_tax_retrofit_date', current_time('mysql'));
-            update_option('wc_tax_retrofit_count', $total_updated);
+            update_option('wc_tax_retrofit_count', $previous_batches + $stats['updated']);
             delete_option('wc_tax_retrofit_partial_count');
             delete_option('wc_tax_retrofit_current_offset');
             delete_option('wc_tax_retrofit_last_activity');
@@ -2278,11 +3398,120 @@ if (defined('WP_CLI') && WP_CLI) {
             WP_CLI::success(__('Migration terminée', 'wcs-tax-retrofit'));
             WP_CLI::line('');
             WP_CLI::line(sprintf('  ✓ ' . __('Mis à jour', 'wcs-tax-retrofit') . '  : %d', $total_updated));
+            WP_CLI::line(sprintf('  ↻ ' . __('Renouvellements impayés', 'wcs-tax-retrofit') . ' : %d', $total_renewals));
             WP_CLI::line(sprintf('  ⊗ ' . __('Ignorés', 'wcs-tax-retrofit') . '     : %d', $total_skipped));
             WP_CLI::line(sprintf('  ✗ ' . __('Erreurs', 'wcs-tax-retrofit') . '     : %d', $total_errors));
             WP_CLI::line('');
         }
         
+        /**
+         * Annule la migration : remet les abonnements migrés (et leurs renouvellements impayés convertis) en TTC sans TVA
+         *
+         * Utilise les valeurs d'origine enregistrées lors de la migration (méta _wc_tax_retrofit_original,
+         * migrations faites avec la version 1.4.5 ou plus). Un abonnement modifié depuis la migration
+         * (ligne supprimée, montant changé...) n'est pas touché. Les renouvellements payés depuis sont conservés.
+         *
+         * ## OPTIONS
+         *
+         * [--yes-i-have-a-backup]
+         * : Confirmation que vous avez fait une sauvegarde (OBLIGATOIRE, sauf avec --dry-run)
+         *
+         * [--dry-run]
+         * : Vérifie ce qui serait annulé, sans rien modifier
+         *
+         * [--subscription=<id>]
+         * : N'annuler qu'un seul abonnement
+         *
+         * [--skip-confirm]
+         * : Sauter la confirmation interactive
+         *
+         * ## EXAMPLES
+         *
+         *     wp tax-retrofit revert --dry-run
+         *     wp tax-retrofit revert --yes-i-have-a-backup
+         *     wp tax-retrofit revert --yes-i-have-a-backup --subscription=123
+         */
+        public function revert($args, $assoc_args) {
+            if (!wc_tax_retrofit_check_dependencies()) {
+                WP_CLI::error(__('Dépendances manquantes', 'wcs-tax-retrofit'));
+            }
+
+            $dry_run = isset($assoc_args['dry-run']);
+            if (!$dry_run && !isset($assoc_args['yes-i-have-a-backup'])) {
+                WP_CLI::error(__('ARRÊT : Vous devez confirmer avoir fait une sauvegarde avec --yes-i-have-a-backup', 'wcs-tax-retrofit'));
+            }
+
+            $non_transactional = wc_tax_retrofit_get_non_transactional_tables();
+            if (!$dry_run && !empty($non_transactional)) {
+                WP_CLI::error(wc_tax_retrofit_non_transactional_message($non_transactional));
+            }
+
+            if (wc_tax_retrofit_bg_is_running()) {
+                WP_CLI::error(__('Une mise à jour est déjà en cours.', 'wcs-tax-retrofit'));
+            }
+
+            $ids = isset($assoc_args['subscription'])
+                ? array((int) $assoc_args['subscription'])
+                : wc_tax_retrofit_get_migrated_subscription_ids();
+
+            if (empty($ids)) {
+                WP_CLI::success(__('Aucun abonnement migré à annuler.', 'wcs-tax-retrofit'));
+                return;
+            }
+
+            if (!$dry_run) {
+                WP_CLI::warning('⚠️  ' . sprintf(__('ANNULATION : %d abonnement(s) vont repasser en TTC sans TVA', 'wcs-tax-retrofit'), count($ids)));
+                if (!isset($assoc_args['skip-confirm'])) {
+                    fwrite(STDOUT, __('Êtes-vous ABSOLUMENT SÛR ? Tapez "OUI" pour continuer : ', 'wcs-tax-retrofit'));
+                    if (trim((string) fgets(STDIN)) !== 'OUI') {
+                        WP_CLI::error(__('Migration annulée', 'wcs-tax-retrofit'));
+                    }
+                }
+            }
+
+            $lock = wc_tax_retrofit_acquire_lock();
+            if ($lock === null) {
+                WP_CLI::error(__('Une mise à jour est déjà en cours.', 'wcs-tax-retrofit'));
+            }
+
+            $reverted = 0;
+            $renewals = 0;
+            $refused = array();
+            try {
+                foreach ($ids as $subscription_id) {
+                    wc_tax_retrofit_refresh_lock($lock);
+                    $result = wc_tax_retrofit_revert_subscription($subscription_id, $dry_run, 'WP-CLI');
+                    if ($result['ok']) {
+                        $reverted++;
+                        $renewals += $result['renewals'];
+                        WP_CLI::line(sprintf('  %s #%d%s', $dry_run ? '🔍' : '✓', $subscription_id,
+                            $result['renewals'] ? sprintf(' (+%d)', $result['renewals']) : ''));
+                    } else {
+                        $refused[] = $result['message'];
+                        WP_CLI::warning($result['message']);
+                    }
+                }
+            } finally {
+                wc_tax_retrofit_release_lock($lock);
+            }
+
+            // Plus aucun abonnement migré : l'état "exécuté" n'a plus lieu d'être
+            if (!$dry_run && $reverted > 0 && empty(wc_tax_retrofit_get_migrated_subscription_ids())) {
+                delete_option('wc_tax_retrofit_executed');
+                delete_option('wc_tax_retrofit_count');
+                delete_option('wc_tax_retrofit_date');
+            }
+
+            WP_CLI::line('');
+            WP_CLI::line(sprintf('  ✓ ' . __('Mis à jour', 'wcs-tax-retrofit') . '  : %d', $reverted));
+            WP_CLI::line(sprintf('  ↻ ' . __('Renouvellements impayés', 'wcs-tax-retrofit') . ' : %d', $renewals));
+            WP_CLI::line(sprintf('  ⊗ ' . __('Ignorés', 'wcs-tax-retrofit') . '     : %d', count($refused)));
+            if (!empty($refused)) {
+                WP_CLI::error(sprintf(__('%d abonnement(s) non annulé(s)', 'wcs-tax-retrofit'), count($refused)));
+            }
+            WP_CLI::success($dry_run ? __('Simulation terminée', 'wcs-tax-retrofit') : __('Annulation terminée', 'wcs-tax-retrofit'));
+        }
+
         /**
          * Affiche les statistiques de migration
          * 
@@ -2302,7 +3531,7 @@ if (defined('WP_CLI') && WP_CLI) {
             
             $offset = get_option('wc_tax_retrofit_current_offset', 0);
             $last_activity = get_option('wc_tax_retrofit_last_activity', 0);
-            $running = get_transient('wc_tax_retrofit_running');
+            $running = wc_tax_retrofit_is_locked() || wc_tax_retrofit_bg_is_running();
             
             WP_CLI::line(sprintf('  ' . __('Offset actuel', 'wcs-tax-retrofit') . '    : %d', $offset));
             
@@ -2314,6 +3543,22 @@ if (defined('WP_CLI') && WP_CLI) {
             }
             
             WP_CLI::line(sprintf('  ' . __('Statut', 'wcs-tax-retrofit') . '           : %s', $running ? __('En cours', 'wcs-tax-retrofit') : __('Arrêté', 'wcs-tax-retrofit')));
+
+            $bg = wc_tax_retrofit_bg_get_state();
+            if (!empty($bg['status'])) {
+                WP_CLI::line(sprintf('  ' . __('Arrière-plan', 'wcs-tax-retrofit') . '     : %s (%d / %d, %s %d, %s %d)',
+                    $bg['status'], (int) $bg['offset'], (int) $bg['total'],
+                    __('Mis à jour', 'wcs-tax-retrofit'), (int) $bg['updated'], __('Erreurs', 'wcs-tax-retrofit'), (int) $bg['errors']));
+            }
+
+            if (get_option('wc_tax_retrofit_executed', false)) {
+                WP_CLI::line('');
+                WP_CLI::line('  ✅ ' . __('Déjà exécuté', 'wcs-tax-retrofit'));
+                WP_CLI::line('  ' . __('Date :', 'wcs-tax-retrofit') . ' ' . get_option('wc_tax_retrofit_date', ''));
+                WP_CLI::line('  ' . __('Abonnements :', 'wcs-tax-retrofit') . ' ' . (int) get_option('wc_tax_retrofit_count', 0));
+            } elseif (($partial = (int) get_option('wc_tax_retrofit_partial_count', 0)) > 0) {
+                WP_CLI::line('  ' . __('Mis à jour', 'wcs-tax-retrofit') . ' : ' . $partial);
+            }
             WP_CLI::line('');
         }
         
@@ -2332,7 +3577,10 @@ if (defined('WP_CLI') && WP_CLI) {
             delete_option('wc_tax_retrofit_partial_count');
             delete_option('wc_tax_retrofit_current_offset');
             delete_option('wc_tax_retrofit_last_activity');
-            delete_transient('wc_tax_retrofit_running');
+            wc_tax_retrofit_bg_cancel();
+            delete_option(WC_TAX_RETROFIT_BG_STATE);
+            wc_tax_retrofit_force_release_lock();
+            $this->clear_csv();
 
             wc_tax_retrofit_log('Migration complètement réinitialisée via WP-CLI');
             WP_CLI::success(__('Migration complètement réinitialisée', 'wcs-tax-retrofit'));
