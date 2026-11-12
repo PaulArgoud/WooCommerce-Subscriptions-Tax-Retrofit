@@ -1,0 +1,77 @@
+name: Checks
+
+# Contrôles rapides à chaque push et pull request.
+# Les tests d'intégration (tests/run.sh) ne tournent pas ici : ils nécessitent WooCommerce Subscriptions,
+# une extension payante. Lancez-les en local avant chaque release (voir tests/README.md).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  php-syntax:
+    name: Syntaxe PHP ${{ matrix.php }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['7.4', '8.0', '8.1', '8.2', '8.3', '8.4', '8.5']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+      - name: php -l
+        run: |
+          php -l wcs-tax-retrofit.php
+          php -l uninstall.php
+          for f in tests/cases/*.php tests/lib/*.php; do php -l "$f"; done
+
+  translations:
+    name: Traductions synchronisées
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Installer gettext
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gettext
+      - name: Les fichiers .po / .pot compilent
+        run: |
+          for f in languages/*.po; do msgfmt --check -o /dev/null "$f"; done
+      - name: Chaque chaîne du code est dans le .pot, et inversement
+        run: |
+          xgettext --language=PHP --from-code=UTF-8 \
+            --keyword=__ --keyword=esc_html__ --keyword=esc_attr__ --keyword=_e --keyword=esc_html_e \
+            -o /tmp/extracted.pot wcs-tax-retrofit.php
+          python3 - <<'EOF'
+          import re, sys
+          def ids(path):
+              s = open(path, encoding='utf-8').read()
+              return {''.join(re.findall(r'"(.*)"', m.group(1)))
+                      for m in re.finditer(r'^msgid ((?:".*"\n)+)', s, re.M)} - {''}
+          code = ids('/tmp/extracted.pot')
+          bad = False
+          for f in ['languages/wcs-tax-retrofit.pot', 'languages/wcs-tax-retrofit-fr_FR.po', 'languages/wcs-tax-retrofit-en_US.po']:
+              p = ids(f)
+              missing, obsolete = sorted(code - p), sorted(p - code)
+              print(f"{f}: {len(missing)} manquante(s), {len(obsolete)} obsolète(s)")
+              for x in missing:  print("  manquante :", x); bad = True
+              for x in obsolete: print("  obsolète  :", x); bad = True
+          sys.exit(1 if bad else 0)
+          EOF
+      - name: La version du plugin est la même partout
+        run: |
+          header=$(sed -n 's/^ \* Version:[[:space:]]*\([0-9.]*\).*/\1/p' wcs-tax-retrofit.php | head -1)
+          const=$(sed -n "s/.*define('WC_TAX_RETROFIT_VERSION', '\([0-9.]*\)').*/\1/p" wcs-tax-retrofit.php | head -1)
+          changelog=$(sed -n 's/^## \[\([0-9][0-9.]*\)\].*/\1/p' CHANGELOG.md | head -1)
+          echo "en-tête=$header constante=$const changelog=$changelog"
+          [ "$header" = "$const" ] && [ "$header" = "$changelog" ]
+
+  shell:
+    name: Script de test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash -n tests/run.sh
+      - run: shellcheck --severity=error tests/run.sh

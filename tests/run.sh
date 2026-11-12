@@ -172,6 +172,7 @@ for HPOS in $HPOS_MODES; do
 
     expect_exit 0 "migrate" tax-retrofit migrate --yes-i-have-a-backup --skip-confirm
     run_case 02-migrated.php
+    run_case 09-renewal.php
     [ "$(wp tax-retrofit simulate --format=json 2>/dev/null | json_field updated)" = "0" ]; record $? "2e passage : plus rien à migrer (idempotent)"
     expect_exit 0 "revert --dry-run" tax-retrofit revert --dry-run
     expect_exit 0 "revert" tax-retrofit revert --yes-i-have-a-backup --skip-confirm

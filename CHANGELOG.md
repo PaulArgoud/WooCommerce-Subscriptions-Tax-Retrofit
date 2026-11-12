@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+No change to the plugin code.
+
+### Tests and tooling
+- **Renewal after migration**: new scenario `09-renewal` creates a renewal order from each migrated subscription (`wcs_create_renewal_order()`) and checks that the total is identical, VAT is present, the prices-include-tax flag follows the store and HT + VAT = total (shipping included). 28 assertions, run on both storages
+- **GitHub Actions** (`.github/workflows/checks.yml`): PHP syntax on 7.4 to 8.5, translations in sync with the code, same version in the plugin header, the constant and the changelog, syntax of `tests/run.sh`
+- **Measured performance** (documented in `tests/README.md`): about 17 ms and 117 SQL queries per subscription, 2 saves per subscription, flat memory. No optimization needed; flushing the in-memory cache between batches was tried and had no measurable effect
+
+### Documentation
+- README: new section *Try it on a copy of your shop first* (staging procedure including a test renewal and a check on the payment gateway side)
+
 ## [1.4.5] - 2026-11-12
 
 Compatibility and reliability release for **WooCommerce 11.3.0**, **WooCommerce Subscriptions 9.4.1**, **WordPress 7.1** and **PHP 7.4 → 8.5**. The bugs of the first sections were reproduced on v1.4.4 in a disposable WordPress 7.1.4 install (WC 11.3.0 + WCS 9.4.1). The automated suite (`tests/run.sh`, about 430 assertions on real amounts) covers HPOS and posts storage, single site and multisite, **Redis Object Cache 3.0.0** (persistent object cache) and **Index WP MySQL For Speed 1.6.0** (high-performance keys on every table); it is run with PHP 8.3, and the plugin is syntax-checked on PHP 7.4 and 8.5.

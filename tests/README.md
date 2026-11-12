@@ -35,6 +35,7 @@ Exemple complet : `REDIS_PORT=6379 IMFS=1 WCS_PATH=… tests/run.sh`.
 | `01-load` | Chargement avant WooCommerce (ordre alphabétique), hooks, HPOS déclaré, tables InnoDB |
 | CLI (dans `run.sh`) | Codes retour (taux inconnu, date ou tolérance invalide, flags manquants), JSON propre, CSV non cumulé, idempotence |
 | `02-migrated` | 9 abonnements types : client hors pays, port, coupon, arrondis, produit supprimé, classe de taxe, déjà taxé, hors date. Renouvellements impayé (converti) et payé (intact) |
+| `09-renewal` | Renouvellement créé par WooCommerce Subscriptions APRÈS la migration : même total TTC, TVA présente, drapeau prix TTC, HT + TVA = TTC |
 | `03-reverted` | `revert` : retour exact aux valeurs d'origine, métadonnées et renouvellements |
 | `04-rollback` | Un écart de total annule toute la transaction (abonnement + renouvellement) |
 | `05-revert-refused` | `revert` refuse un abonnement modifié depuis la migration |
@@ -42,6 +43,23 @@ Exemple complet : `REDIS_PORT=6379 IMFS=1 WCS_PATH=… tests/run.sh`.
 | MyISAM (dans `run.sh`) | Migration refusée si une table n'est pas InnoDB |
 | `07-background` | Action Scheduler : lancement, double lancement refusé, exécution des lots, annulation |
 | `08-uninstall` | Plus aucune option ni transient, y compris dans Redis ; multisite |
+
+## Intégration continue
+
+`.github/workflows/checks.yml` s'exécute à chaque push : syntaxe PHP 7.4 à 8.5, traductions synchronisées avec le code (`xgettext`), même version dans l'en-tête, la constante et le CHANGELOG, syntaxe de `run.sh`. Les tests d'intégration n'y tournent pas (WooCommerce Subscriptions est payant) : lancez `tests/run.sh` en local avant chaque release.
+
+## Performances mesurées
+
+237 abonnements (3 lots de 100), WooCommerce 11.3 + Subscriptions 9.4.1, PHP 8.3, MySQL 8, machine de développement :
+
+| Mesure | Valeur |
+|---|---|
+| Durée | 4 s, soit environ 17 ms par abonnement (1 000 abonnements : ~17 s ; 10 000 : ~3 min) |
+| Requêtes SQL | ~117 par abonnement |
+| Sauvegardes de l'abonnement | 2 par abonnement |
+| Mémoire | stable d'un lot à l'autre (56,8 Mo) |
+
+Conclusion : aucune optimisation nécessaire. Vider le cache mémoire entre deux lots (`wp_cache_flush_runtime()`) a été essayé : aucun effet mesurable, il n'a pas été conservé.
 
 ## Ajouter un scénario
 

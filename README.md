@@ -45,6 +45,18 @@ Download and extract into `wp-content/plugins/wcs-tax-retrofit/`
 wp plugin install wcs-tax-retrofit.zip --activate
 ```
 
+## Try it on a copy of your shop first
+
+The automated tests use synthetic data. Before the real migration, run it once on a **copy of your production site** (staging), with your real gateways and plugins:
+
+1. Copy the database and the files to a staging site, and **disable outgoing payments and emails** (put the gateways in test mode, or use a mail catcher). Never run a staging copy with live Stripe / PayPal keys.
+2. `wp tax-retrofit simulate --format=json`: no tolerance warning, no error, and the number of subscriptions matches your expectation.
+3. `wp tax-retrofit migrate --yes-i-have-a-backup`, then open 3 or 4 different subscriptions (with a coupon, with shipping, a customer abroad): total unchanged, VAT shown.
+4. **Create a renewal** for one of them (*Subscription → Actions → Process renewal*) and check that its total is identical and that VAT appears.
+5. Check the next payment amount on your gateway side (for example a Stripe subscription): it must not have changed.
+6. Run `wp tax-retrofit revert --dry-run` then `revert` once to make sure you can go back, and migrate again.
+7. Only then, make a fresh backup of production and migrate for real.
+
 ## What the migration changes
 
 For each subscription matching the selected statuses, created on or before the cutoff date, and **without any VAT yet**:
