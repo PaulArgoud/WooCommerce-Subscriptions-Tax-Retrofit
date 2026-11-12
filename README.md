@@ -20,7 +20,7 @@ Retrofits existing WooCommerce Subscriptions stored as **tax-inclusive with no s
 | Component | Minimum | Tested up to |
 |---|---|---|
 | WordPress | 6.2 | 7.1 (single site and multisite) |
-| PHP | 7.4 | 8.5 |
+| PHP | 7.4 | 8.3 (integration tests); syntax checked on 7.4 to 8.5 |
 | WooCommerce | 8.0 | 11.3 (posts storage and HPOS) |
 | WooCommerce Subscriptions | — | 9.4.1 |
 | Database | InnoDB tables (SQL transactions are used for rollback) | MySQL 8.0 |
@@ -152,10 +152,14 @@ Every invalid value (unknown tax rate, invalid date, tolerance out of range) sto
 - French and English interface
 - POT file included for new translations (303 strings)
 
+### Performance
+- About 17 ms per subscription (237 subscriptions in 4 seconds, ~3 minutes for 10,000 extrapolated), flat memory between batches. Details in `tests/README.md`
+
 ### For developers
-- 4 filters + 1 action (+ 5 optional filters, see below)
+- 4 configuration filters + 1 action, and 4 optional behaviour filters (see below)
 - Single PHP file, no build step
-- Integration test suite: `tests/run.sh` (see `tests/README.md`)
+- Integration test suite: `tests/run.sh` (see `tests/README.md`), including a renewal created after the migration
+- GitHub Actions checks on every push (PHP syntax 7.4 to 8.5, translations, version consistency)
 
 ## Available hooks
 

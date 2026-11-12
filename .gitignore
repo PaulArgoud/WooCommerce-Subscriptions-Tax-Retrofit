@@ -15,8 +15,6 @@ Thumbs.db
 # WordPress
 wp-config.php
 
-# Claude Code
-CLAUDE.md
 
 # Packages
 node_modules/

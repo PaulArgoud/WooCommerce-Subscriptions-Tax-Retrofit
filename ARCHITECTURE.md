@@ -14,9 +14,11 @@ Single-file WordPress plugin (~3600 lines of PHP, ~60 functions) that migrates W
 wcs-tax-retrofit.php                — Main plugin file (all code)
 uninstall.php                       — Database cleanup on plugin deletion (all sites of a network)
 tests/
+  README.md                         — How to run the suite, variables, measured performance
   run.sh                            — Integration test runner (disposable WordPress + database)
   cases/*.php                       — Scenarios (wp eval-file), see tests/README.md
   lib/assert.php, lib/fixtures.php  — Assertions and reference data set
+.github/workflows/checks.yml        — CI: PHP syntax 7.4-8.5, translations in sync, same version everywhere
 languages/
   wcs-tax-retrofit.pot              — Translation template (303 strings)
   wcs-tax-retrofit-fr_FR.po         — French translation
@@ -196,7 +198,7 @@ Result is cached with a `static` variable and a `$cached_resolved` flag to handl
 
 | Function | ~Lines | Purpose |
 |----------|--------|---------|
-| `admin_page()` | ~700 | Full admin page: config, simulation, migration, reset |
+| `admin_page()` | ~900 | Full admin page: config, simulation, migration, reset |
 | `admin_menu()` | 8 | Registers the WooCommerce submenu |
 | `display_results($stats, $dry_run)` | ~130 | Renders results with progress bar and auto-continue |
 | `export_csv()` | ~50 | Generates CSV download (hooked on admin_init) |
@@ -352,7 +354,8 @@ Intentionally **kept**: migrated subscription data, `[Tax Retrofit vX.Y.Z]` orde
 
 - **`wp tax-retrofit revert`** (`wc_tax_retrofit_revert_subscription()` / `…_revert_order()`): one transaction per subscription (+ its converted unpaid renewals); refuses an object modified since the migration; always use `$order->get_item($id, false)` for writes (the default reloads a detached object that `save()` ignores); final check compares each line to the original values.
 - **Background migration**: `wc_tax_retrofit_bg_start()` → Action Scheduler task `wc_tax_retrofit_bg_batch` (one batch per task, next one scheduled at the end) → state in `wc_tax_retrofit_bg_state`. Cancel with `as_unschedule_all_actions($hook)` **without group/args** (with empty args, AS only matches tasks whose args are empty).
-- **Tests**: `tests/run.sh` (see `tests/README.md`). Run it before every release: it covers posts storage + HPOS, Redis, Index WP MySQL For Speed, multisite, rollback, lock, revert, background. The test runner deletes the `mu-plugins/index-wp-mysql-for-speed-update-filter.php` file left by that plugin when it rebuilds a site (it otherwise prevents WooCommerce from creating its `*_meta` tables on a fresh database).
+- **Tests**: `tests/run.sh` (see `tests/README.md`). Run it before every release: it covers posts storage + HPOS, Redis, Index WP MySQL For Speed, multisite, rollback, lock, revert, background, and a renewal order created after the migration (`09-renewal`). It needs the paid WooCommerce Subscriptions, so CI (`.github/workflows/checks.yml`) only runs the fast checks.
+- **Performance** (measured, 237 subscriptions, PHP 8.3): ~17 ms and ~117 SQL queries per subscription, 2 saves per subscription, flat memory between batches. Flushing the in-memory cache between batches was tried and had no measurable effect, so it is not done. The test runner deletes the `mu-plugins/index-wp-mysql-for-speed-update-filter.php` file left by that plugin when it rebuilds a site (it otherwise prevents WooCommerce from creating its `*_meta` tables on a fresh database).
 
 ## Dependencies and loading
 

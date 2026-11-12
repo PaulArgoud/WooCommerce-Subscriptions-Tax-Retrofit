@@ -13,6 +13,8 @@ No change to the plugin code.
 
 ### Documentation
 - README: new section *Try it on a copy of your shop first* (staging procedure including a test renewal and a check on the payment gateway side)
+- README: fixed *"+ 5 optional filters"* (there are 4), PHP *"tested up to 8.5"* (integration tests run on 8.3, syntax is checked on 7.4 to 8.5), added the performance figures and the CI
+- ARCHITECTURE.md: added `.github/workflows/checks.yml`, `tests/README.md`, the renewal scenario and the measured performance; corrected the size of `admin_page()` (~900 lines)
 
 ## [1.4.5] - 2026-11-12
 
